@@ -1,0 +1,23 @@
+import os
+import pandas as pd
+from deduplix import DeduplicationPipeline, FuzzyMatcher, LLMValidator
+print("Hello from Python!")
+
+
+os.environ['OPENAI_API_KEY'] = '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'  # REPLACE THIS!
+
+df = pd.read_csv('test_data.csv')
+pipeline = DeduplicationPipeline(
+    matcher=FuzzyMatcher(threshold=70),
+    validator=LLMValidator(
+        api_key=os.environ['OPENAI_API_KEY'],
+        provider='openai',
+        model='gpt-5',
+        batch_size=4
+    )
+)
+print("🚀 Starting pipeline...")
+
+result = pipeline.run(df, id_column='id', name_column='name')
+print(f"✅ LLM test: Found {result.statistics['duplicate_groups']} groups")
+print(f"   Validated: {result.statistics['duplicate_pairs']} pairs")
