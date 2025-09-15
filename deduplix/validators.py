@@ -279,40 +279,24 @@ class LLMValidator(Validator):
                     pair_desc += f"\n  Metadata: {', '.join(metadata_parts)}"
             
             pairs_text.append(pair_desc)
-        
-        # Build base rules
-        base_rules = [
-            "- Legal entity suffixes (Inc, Ltd, LLC, Corp) can usually be ignored",
-            "- Minor typos and abbreviations should be treated as same entity",
-            "- Different numbers, versions, or series indicate DIFFERENT entities",
-            "- Sub-funds (A vs B) or numbered entities are DIFFERENT",
-            "- Individual names with small typos ⇒ same person"
-        ]
-        
-        # Add custom rules
-        if self.custom_rules.get('require_same_country'):
-            base_rules.append("- IMPORTANT: Entities from different countries are DIFFERENT entities")
-        
-        if self.custom_rules.get('require_same_industry'):
-            base_rules.append("- IMPORTANT: Entities from different industries are DIFFERENT entities")
-        
-        if 'max_revenue_difference_percent' in self.custom_rules:
-            max_diff = self.custom_rules['max_revenue_difference_percent']
-            base_rules.append(f"- Entities with revenue difference > {max_diff}% are likely DIFFERENT")
-        
-        if 'custom_instructions' in self.custom_rules:
-            base_rules.append(f"- {self.custom_rules['custom_instructions']}")
+            # Build base rules
+            base_rules = [
+                "- Only minor typographical errors (typos) should be considered as indicating the same entity"
+            ]
 
-        prompt = (
-            "Analyze these potential duplicate entity pairs. Return ONLY JSON with a top-level key 'decisions', "
-            "where each item is {\"pair_index\": <index>, \"is_duplicate\": true|false, \"reason\": \"...\"}.\n\n"
-            "Consider these rules:\n"
-            f"{chr(10).join(base_rules)}\n\n"
-            "Entity Pairs:\n"
-            f"{chr(10).join(pairs_text)}\n\n"
-            "Return only JSON."
-        )
-        
+            # Add custom rules
+            if 'custom_instructions' in self.custom_rules:
+                base_rules.append(f"- {self.custom_rules['custom_instructions']}")
+
+            prompt = (
+                "Analyze these potential duplicate entity pairs. Return ONLY JSON with a top-level key 'decisions', "
+                "where each item is {\"pair_index\": <index>, \"is_duplicate\": true|false, \"reason\": \"...\"}.\n\n"
+                "Consider these rules:\n"
+                f"{chr(10).join(base_rules)}\n\n"
+                "Entity Pairs:\n"
+                f"{chr(10).join(pairs_text)}\n\n"
+                "Return only JSON."
+            )    
         return prompt
 
     def _create_prompt(self, batch: pd.DataFrame) -> str:
