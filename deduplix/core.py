@@ -1,4 +1,4 @@
-
+#core.py
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -9,7 +9,7 @@ import json
 import hashlib
 from datetime import datetime
 from abc import ABC, abstractmethod
-
+from .utils import remove_duplicates_after_deduplication
 
 @dataclass
 class MatchResult:
@@ -69,6 +69,203 @@ class DeduplicationResult:
             entity_groups=entity_groups,
             duplicate_pairs=duplicate_pairs,
             statistics=statistics
+        )
+    
+    def remove_duplicates(
+        self, 
+        original_df: pd.DataFrame,
+        id_column: str = 'id',
+        keep_strategy: str = 'first'
+    ) -> pd.DataFrame:
+        """Remove duplicate rows from original dataframe"""
+        
+        entity_groups = self.entity_groups.copy()
+        entities_to_keep = []
+        
+        # Keep singletons (group_id = 0)
+        singletons = entity_groups[entity_groups['group_id'] == 0]['entity_id'].tolist()
+        entities_to_keep.extend(singletons)
+        
+        # Process duplicate groups
+        duplicate_groups = entity_groups[entity_groups['group_id'] > 0].groupby('group_id')
+        
+        for group_id, group_df in duplicate_groups:
+            group_entities = group_df['entity_id'].tolist()
+            
+            if keep_strategy == 'first':
+                # Keep entity that appears first in original dataframe
+                original_indices = []
+                for entity_id in group_entities:
+                    idx = original_df[original_df[id_column] == entity_id].index
+                    if len(idx) > 0:
+                        original_indices.append((entity_id, idx[0]))
+                
+                if original_indices:
+                    original_indices.sort(key=lambda x: x[1])
+                    entities_to_keep.append(original_indices[0][0])
+                    
+            elif keep_strategy == 'last':
+                # Keep entity that appears last in original dataframe
+                original_indices = []
+                for entity_id in group_entities:
+                    idx = original_df[original_df[id_column] == entity_id].index
+                    if len(idx) > 0:
+                        original_indices.append((entity_id, idx[-1]))
+                
+                if original_indices:
+                    original_indices.sort(key=lambda x: x[1])
+                    entities_to_keep.append(original_indices[-1][0])
+                    
+            elif keep_strategy == 'highest_score':
+                # Keep entity with highest average similarity score
+                if not self.duplicate_pairs.empty:
+                    entity_scores = {}
+                    for entity_id in group_entities:
+                        pairs_as_id1 = self.duplicate_pairs[self.duplicate_pairs['id1'] == entity_id]
+                        pairs_as_id2 = self.duplicate_pairs[self.duplicate_pairs['id2'] == entity_id]
+                        
+                        scores = []
+                        scores.extend(pairs_as_id1['similarity_score'].tolist())
+                        scores.extend(pairs_as_id2['similarity_score'].tolist())
+                        
+                        entity_scores[entity_id] = sum(scores) / len(scores) if scores else 0
+                    
+                    if entity_scores:
+                        best_entity = max(entity_scores.keys(), key=lambda x: entity_scores[x])
+                        entities_to_keep.append(best_entity)
+                    else:
+                        entities_to_keep.append(group_entities[0])
+                else:
+                    entities_to_keep.append(group_entities[0])
+            else:
+                # Default to first entity in group
+                entities_to_keep.append(group_entities[0])
+        
+        # Filter original dataframe
+        cleaned_df = original_df[original_df[id_column].isin(entities_to_keep)].copy()
+        return cleaned_df
+
+    def get_entities_to_keep(self, keep_strategy: str = 'first') -> List:
+        """Get list of entity IDs to keep (one from each duplicate group + singletons)"""
+        entities_to_keep = []
+        
+        # Keep singletons (group_id = 0)
+        singletons = self.entity_groups[self.entity_groups['group_id'] == 0]['entity_id'].tolist()
+        entities_to_keep.extend(singletons)
+        
+        # One entity from each duplicate group
+        duplicate_groups = self.entity_groups[self.entity_groups['group_id'] > 0].groupby('group_id')
+        
+        for group_id, group_df in duplicate_groups:
+            group_entities = group_df['entity_id'].tolist()
+            
+            if keep_strategy == 'highest_score' and not self.duplicate_pairs.empty:
+                entity_scores = {}
+                for entity_id in group_entities:
+                    pairs_as_id1 = self.duplicate_pairs[self.duplicate_pairs['id1'] == entity_id]
+                    pairs_as_id2 = self.duplicate_pairs[self.duplicate_pairs['id2'] == entity_id]
+                    
+                    scores = []
+                    scores.extend(pairs_as_id1['similarity_score'].tolist())
+                    scores.extend(pairs_as_id2['similarity_score'].tolist())
+                    
+                    entity_scores[entity_id] = sum(scores) / len(scores) if scores else 0
+                
+                best_entity = max(entity_scores.keys(), key=lambda x: entity_scores[x])
+                entities_to_keep.append(best_entity)
+            else:
+                entities_to_keep.append(group_entities[0])
+        
+        return entities_to_keep
+
+    def get_removal_summary(self, original_df: pd.DataFrame, cleaned_df: pd.DataFrame) -> Dict[str, Any]:
+        """Get summary statistics of removal process"""
+        return {
+            'original_count': len(original_df),
+            'cleaned_count': len(cleaned_df),
+            'duplicates_removed': len(original_df) - len(cleaned_df),
+            'duplicate_groups_found': self.statistics['duplicate_groups'],
+            'entities_with_duplicates': self.statistics['entities_with_duplicates'],
+            'removal_rate': (len(original_df) - len(cleaned_df)) / len(original_df) * 100 if len(original_df) > 0 else 0
+        }
+
+
+@dataclass
+class CrossDatasetResult:
+    """Result from cross-dataset matching"""
+    cross_matches: pd.DataFrame  # columns: [df1_id, df1_name, df2_id, df2_name, similarity_score]
+    df1_metadata: Dict[str, Any]
+    df2_metadata: Dict[str, Any] 
+    statistics: Dict[str, Any]
+    
+    def get_df1_matches(self, df1_id) -> List[Dict]:
+        """Get all df2 entities that match a df1 entity"""
+        matches = self.cross_matches[self.cross_matches['df1_id'] == df1_id]
+        return matches.to_dict('records')
+    
+    def get_df2_matches(self, df2_id) -> List[Dict]:
+        """Get all df1 entities that match a df2 entity"""  
+        matches = self.cross_matches[self.cross_matches['df2_id'] == df2_id]
+        return matches.to_dict('records')
+    
+    def merge_datasets(
+        self, 
+        df1: pd.DataFrame, 
+        df2: pd.DataFrame,
+        how: str = 'inner',
+        suffix1: str = '_df1',
+        suffix2: str = '_df2'
+    ) -> pd.DataFrame:
+        """Merge datasets based on found matches"""
+        
+        if self.cross_matches.empty:
+            return pd.DataFrame()
+            
+        # Prepare merge keys
+        id_col1 = self.df1_metadata['id_col']
+        id_col2 = self.df2_metadata['id_col'] 
+        
+        # Create merge dataframe
+        merge_keys = self.cross_matches[['df1_id', 'df2_id', 'similarity_score']].copy()
+        merge_keys = merge_keys.rename(columns={'df1_id': id_col1, 'df2_id': id_col2})
+        
+        # Merge df1
+        result = merge_keys.merge(df1, on=id_col1, how=how, suffixes=('', suffix1))
+        
+        # Merge df2
+        result = result.merge(df2, on=id_col2, how=how, suffixes=(suffix1, suffix2))
+        
+        return result
+    
+    def save(self, path: str):
+        """Save cross-dataset results"""
+        output_dir = Path(path)
+        output_dir.mkdir(exist_ok=True, parents=True)
+        
+        self.cross_matches.to_csv(output_dir / 'cross_matches.csv', index=False)
+        
+        with open(output_dir / 'metadata.json', 'w') as f:
+            json.dump({
+                'df1_metadata': self.df1_metadata,
+                'df2_metadata': self.df2_metadata, 
+                'statistics': self.statistics
+            }, f, indent=2, default=str)
+    
+    @classmethod
+    def load(cls, path: str):
+        """Load cross-dataset results"""
+        input_dir = Path(path)
+        
+        cross_matches = pd.read_csv(input_dir / 'cross_matches.csv')
+        
+        with open(input_dir / 'metadata.json', 'r') as f:
+            data = json.load(f)
+        
+        return cls(
+            cross_matches=cross_matches,
+            df1_metadata=data['df1_metadata'],
+            df2_metadata=data['df2_metadata'],
+            statistics=data['statistics']
         )
 
 
@@ -311,3 +508,117 @@ class DeduplicationPipeline:
         print(f"  Singleton entities: {result.statistics['singleton_entities']}")
         
         return result
+
+    def run_cross_dataset(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame,
+        id_column1: str = 'id',
+        name_column1: str = 'name',
+        id_column2: str = 'id', 
+        name_column2: str = 'name',
+        additional_columns1: Optional[List[str]] = None,
+        additional_columns2: Optional[List[str]] = None,
+        resume: bool = True
+    ) -> CrossDatasetResult:
+        """Run cross-dataset deduplication between two dataframes"""
+        
+        # Check if matcher supports cross-dataset matching
+        if not hasattr(self.matcher, 'find_cross_matches'):
+            raise ValueError("Matcher does not support cross-dataset matching")
+        
+        print(f"Cross-dataset matching: {len(df1)} entities in df1 vs {len(df2)} entities in df2")
+        
+        # Stage 1: Cross-dataset matching
+        print(f"Stage 1: Finding cross-dataset matches...")
+        
+        match_result = self.matcher.find_cross_matches(
+            df1, df2,
+            id_column1=id_column1,
+            name_column1=name_column1,
+            id_column2=id_column2, 
+            name_column2=name_column2,
+            additional_columns1=additional_columns1,
+            additional_columns2=additional_columns2
+        )
+        
+        print(f"  Found {len(match_result.pairs)} cross-dataset matches")
+        
+        # Stage 2: Validation (optional)
+        if self.validator:
+            print(f"Stage 2: Validating cross-dataset matches...")
+            
+            # For cross-dataset validation, combine both dataframes for context
+            combined_df = pd.concat([
+                df1.rename(columns={id_column1: 'id', name_column1: 'name'}),
+                df2.rename(columns={id_column2: 'id', name_column2: 'name'})
+            ], ignore_index=True)
+            
+            validation_result = self.validator.validate(match_result, original_df=combined_df)
+            
+            print(f"  Validated: {len(validation_result.validated_pairs)} pairs kept, "
+                  f"{len(validation_result.removed_pairs)} removed")
+            
+            pairs_for_result = validation_result.validated_pairs
+        else:
+            pairs_for_result = match_result.pairs
+        
+        # Create cross-dataset result
+        result = self._create_cross_dataset_result(df1, df2, pairs_for_result, 
+                                                 id_column1, name_column1, 
+                                                 id_column2, name_column2)
+        
+        print(f"\nCross-dataset matching complete:")
+        print(f"  DF1 entities: {len(df1)}")
+        print(f"  DF2 entities: {len(df2)}")
+        print(f"  Cross-matches found: {len(pairs_for_result)}")
+        
+        return result
+
+    def _create_cross_dataset_result(
+        self, 
+        df1: pd.DataFrame, 
+        df2: pd.DataFrame, 
+        validated_pairs: pd.DataFrame,
+        id_column1: str, 
+        name_column1: str,
+        id_column2: str, 
+        name_column2: str
+    ) -> CrossDatasetResult:
+        """Create cross-dataset matching result"""
+        
+        # Create entity mapping
+        matches = []
+        for _, row in validated_pairs.iterrows():
+            matches.append({
+                'df1_id': row['id1'],
+                'df1_name': row['name1'],
+                'df2_id': row['id2'], 
+                'df2_name': row['name2'],
+                'similarity_score': row['similarity_score'],
+                'validation_reason': row.get('validation_reason', '')
+            })
+        
+        matches_df = pd.DataFrame(matches) if matches else pd.DataFrame()
+        
+        # Statistics
+        df1_with_matches = set(validated_pairs['id1'].tolist()) if not validated_pairs.empty else set()
+        df2_with_matches = set(validated_pairs['id2'].tolist()) if not validated_pairs.empty else set()
+        
+        statistics = {
+            'df1_total': len(df1),
+            'df2_total': len(df2),
+            'cross_matches': len(validated_pairs),
+            'df1_matched_entities': len(df1_with_matches),
+            'df2_matched_entities': len(df2_with_matches),
+            'df1_unmatched': len(df1) - len(df1_with_matches),
+            'df2_unmatched': len(df2) - len(df2_with_matches),
+            'avg_similarity': validated_pairs['similarity_score'].mean() if not validated_pairs.empty else 0
+        }
+        
+        return CrossDatasetResult(
+            cross_matches=matches_df,
+            df1_metadata={'total': len(df1), 'id_col': id_column1, 'name_col': name_column1},
+            df2_metadata={'total': len(df2), 'id_col': id_column2, 'name_col': name_column2},
+            statistics=statistics
+        )
