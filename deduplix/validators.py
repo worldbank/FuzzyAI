@@ -284,11 +284,21 @@ class LLMValidator(Validator):
         max_retries: int = 3,
         custom_rules: Optional[Dict[str, Any]] = None,
         metadata_columns: Optional[List[str]] = None,
-        *,
+        checkpoint_every_n_batches: int = 0,  
+        
         databricks_host: Optional[str] = None,
         databricks_endpoint: Optional[str] = None,
         use_langchain_databricks: bool = False,
     ):
+        """
+        Parameters
+        ----------
+        ...
+        checkpoint_every_n_batches : int
+            Save checkpoint after every N batches. 0 = no batch checkpointing (default).
+            Example: checkpoint_every_n_batches=5 saves after every 5 batches processed.
+        ...
+        """
         super().__init__()
         self.api_key = api_key
         self.model = model
@@ -299,6 +309,7 @@ class LLMValidator(Validator):
         self.max_retries = max_retries
         self.custom_rules = custom_rules or {}
         self.metadata_columns = metadata_columns or []
+        self.checkpoint_every_n_batches = checkpoint_every_n_batches  # NEW
 
         # Databricks extras
         self.databricks_host = databricks_host or os.getenv("DATABRICKS_HOST")
@@ -306,7 +317,7 @@ class LLMValidator(Validator):
         self.use_langchain_databricks = use_langchain_databricks
 
         self.client = None
-        self._client_mode = None  # "openai_v1" | "anthropic_v1" | "databricks_openai" | "databricks_langchain"
+        self._client_mode = None
         self._init_client()
 
     # ---------- Client initialization ----------
@@ -568,7 +579,10 @@ class LLMValidator(Validator):
         original_df : pd.DataFrame, optional
             Original dataframe with metadata columns for enhanced validation
         **kwargs
-            Additional parameters (for compatibility)
+            Additional parameters:
+            - checkpointer: Checkpointer instance for saving progress
+            - data_hash: Hash string for checkpoint files
+            - resume: Whether to resume from checkpoint
         
         Returns
         -------
@@ -584,24 +598,80 @@ class LLMValidator(Validator):
                 metadata={"message": "No pairs to validate"},
             )
 
+        # Get checkpoint parameters from kwargs
+        checkpointer = kwargs.get('checkpointer')
+        data_hash = kwargs.get('data_hash')
+        resume = kwargs.get('resume', True)
+        
         # Create batches for LLM processing
         batches = [
             pairs_df.iloc[i : i + self.batch_size]
             for i in range(0, len(pairs_df), self.batch_size)
         ]
-
-        # Process batches in parallel
+        
+        # Load existing progress if resuming
         all_decisions: Dict[int, Dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
-            futures = {
-                ex.submit(self._process_batch, batch, original_df): batch 
-                for batch in batches
-            }
-            for fut in tqdm(as_completed(futures), total=len(futures), desc="LLM validation"):
-                try:
-                    all_decisions.update(fut.result())
-                except Exception as e:
-                    print(f"Error processing batch: {e}")
+        processed_batches = set()
+        
+        if self.checkpoint_every_n_batches > 0 and checkpointer and data_hash and resume:
+            checkpoint_data = checkpointer.load('validation_progress', data_hash)
+            if checkpoint_data is not None:
+                # Load previous decisions
+                for _, row in checkpoint_data.iterrows():
+                    idx = row['pair_index']
+                    all_decisions[idx] = {
+                        'is_duplicate': row['is_duplicate'],
+                        'reason': row.get('reason', '')
+                    }
+                
+                # Determine which batches were already processed
+                processed_indices = set(all_decisions.keys())
+                for batch_idx, batch in enumerate(batches):
+                    if all(idx in processed_indices for idx in batch.index):
+                        processed_batches.add(batch_idx)
+                
+                print(f"  Resuming from checkpoint: {len(processed_batches)}/{len(batches)} batches already processed")
+
+        # Process batches in parallel with checkpointing
+        batches_to_process = [(i, batch) for i, batch in enumerate(batches) if i not in processed_batches]
+        
+        if batches_to_process:
+            from collections import defaultdict
+            batch_counter = len(processed_batches)
+            
+            with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
+                # Submit all unprocessed batches
+                futures = {
+                    ex.submit(self._process_batch, batch, original_df): (batch_idx, batch)
+                    for batch_idx, batch in batches_to_process
+                }
+                
+                for fut in tqdm(as_completed(futures), total=len(futures), desc="LLM validation"):
+                    try:
+                        batch_decisions = fut.result()
+                        all_decisions.update(batch_decisions)
+                        batch_counter += 1
+                        
+                        # Checkpoint every N batches
+                        if (self.checkpoint_every_n_batches > 0 and 
+                            checkpointer and 
+                            data_hash and 
+                            batch_counter % self.checkpoint_every_n_batches == 0):
+                            
+                            # Save current progress
+                            progress_rows = []
+                            for idx, decision in all_decisions.items():
+                                progress_rows.append({
+                                    'pair_index': idx,
+                                    'is_duplicate': decision['is_duplicate'],
+                                    'reason': decision['reason']
+                                })
+                            progress_df = pd.DataFrame(progress_rows)
+                            checkpointer.save(progress_df, 'validation_progress', data_hash)
+                            print(f"  Checkpoint saved: {batch_counter}/{len(batches)} batches processed")
+                            
+                    except Exception as e:
+                        print(f"Error processing batch: {e}")
 
         # Collect results
         validated_rows, removed_rows = [], []
@@ -627,6 +697,7 @@ class LLMValidator(Validator):
             "model": self.model if self.provider != "databricks" else (self.databricks_endpoint or self.model),
             "provider": self.provider,
             "batches_processed": len(batches),
+            "batches_from_checkpoint": len(processed_batches),
             "validated_count": len(validated_df),
             "removed_count": len(removed_df),
             "validation_rate": len(validated_df) / len(match_result.pairs) if len(match_result.pairs) else 0.0,
