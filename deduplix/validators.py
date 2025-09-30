@@ -1,16 +1,3 @@
-
-
-import pandas as pd
-import numpy as np
-from typing import Optional, List, Dict, Any, Callable
-import json
-import time
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
-from .core import Validator, ValidationResult, MatchResult
-
-
 import os
 import re
 import json
@@ -22,8 +9,6 @@ import pandas as pd
 from tqdm import tqdm
 
 from .core import Validator, ValidationResult, MatchResult
-
-
 
 
 class RuleBasedValidator(Validator):
@@ -72,7 +57,6 @@ class RuleBasedValidator(Validator):
         )
 
 
-
 class LLMValidator(Validator):
     """
     Enhanced LLM-based validation of matches with support for:
@@ -110,7 +94,6 @@ class LLMValidator(Validator):
     custom_rules : Optional[Dict[str, Any]]
         Custom rules for matching. Examples:
         {
-            
             "custom_instructions": "Additional instructions for the LLM"
         }
     metadata_columns : Optional[List[str]]
@@ -253,11 +236,15 @@ class LLMValidator(Validator):
         )
         self._client_mode = "databricks_langchain"
 
-    # ---------- Prompt creation with metadata support ----------
+    # ---------- Prompt creation ----------
 
-    def _create_prompt_with_metadata(self, batch: pd.DataFrame, original_df: pd.DataFrame = None) -> str:
-        """Create enhanced prompt including metadata and custom rules"""
+    def _create_prompt(self, batch: pd.DataFrame, original_df: pd.DataFrame = None) -> str:
+        """
+        Create prompt for LLM validation with optional metadata support.
+        Works for both metadata and non-metadata cases.
+        """
         
+        # Build pair descriptions
         pairs_text = []
         for idx, row in batch.iterrows():
             pair_desc = f"Pair {idx}: '{row['name1']}' vs '{row['name2']}' (similarity: {row['similarity_score']:.1f}%)"
@@ -279,51 +266,28 @@ class LLMValidator(Validator):
                     pair_desc += f"\n  Metadata: {', '.join(metadata_parts)}"
             
             pairs_text.append(pair_desc)
-            # Build base rules
-            base_rules = [
-                "- Only minor typographical errors (typos) should be considered as indicating the same entity"
-            ]
-
-            # Add custom rules
-            if 'custom_instructions' in self.custom_rules:
-                base_rules.append(f"- {self.custom_rules['custom_instructions']}")
-
-            prompt = (
-                "Analyze these potential duplicate entity pairs. Return ONLY JSON with a top-level key 'decisions', "
-                "where each item is {\"pair_index\": <index>, \"is_duplicate\": true|false, \"reason\": \"...\"}.\n\n"
-                "Consider these rules:\n"
-                f"{chr(10).join(base_rules)}\n\n"
-                "Entity Pairs:\n"
-                f"{chr(10).join(pairs_text)}\n\n"
-                "Return only JSON."
-            )    
-        return prompt
-
-    def _create_prompt(self, batch: pd.DataFrame) -> str:
-        """Create basic prompt without metadata (fallback)"""
-        pairs_text = []
-        for idx, row in batch.iterrows():
-            pairs_text.append(
-                f"Pair {idx}: '{row['name1']}' vs '{row['name2']}' (similarity: {row['similarity_score']:.1f}%)"
-            )
         
-        # Use enhanced prompt if custom rules are provided
-        if self.custom_rules:
-            return self._create_prompt_with_metadata(batch)
-            
+        # Build base rules (generic, always applied)
+        base_rules = [
+            "- Carefully determine whether each pair represents the same entity or different entities",
+            "- Consider all aspects of the names and any provided context"
+        ]
+        
+        # Add custom instructions if provided
+        if 'custom_instructions' in self.custom_rules:
+            base_rules.append(f"- {self.custom_rules['custom_instructions']}")
+        
+        # Construct final prompt
         prompt = (
             "Analyze these potential duplicate entity pairs. Return ONLY JSON with a top-level key 'decisions', "
             "where each item is {\"pair_index\": <index>, \"is_duplicate\": true|false, \"reason\": \"...\"}.\n\n"
-            "Consider:\n"
-            "- Ignore legal suffixes (Inc, Ltd, LLC, Corp)\n"
-            "- Minor typos/abbreviations ⇒ same entity\n"
-            "- Different numbers/versions/series ⇒ DIFFERENT entities\n"
-            "- Sub-funds (A vs B) or numbered entities ⇒ DIFFERENT\n"
-            "- Individual names with small typos ⇒ same person\n\n"
+            "Consider these rules:\n"
+            f"{chr(10).join(base_rules)}\n\n"
             "Entity Pairs:\n"
             f"{chr(10).join(pairs_text)}\n\n"
             "Return only JSON."
         )
+        
         return prompt
 
     def _extract_json(self, text: str) -> Dict[str, Any]:
@@ -400,11 +364,7 @@ class LLMValidator(Validator):
 
     def _process_batch(self, batch: pd.DataFrame, original_df: pd.DataFrame = None) -> Dict[int, Dict[str, Any]]:
         """Process a batch of pairs with retries and error handling"""
-        # Use metadata-aware prompt if original_df is provided
-        if original_df is not None and self.metadata_columns:
-            prompt = self._create_prompt_with_metadata(batch, original_df)
-        else:
-            prompt = self._create_prompt(batch)
+        prompt = self._create_prompt(batch, original_df)
             
         for attempt in range(self.max_retries):
             try:
