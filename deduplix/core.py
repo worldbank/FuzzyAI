@@ -417,7 +417,7 @@ class DeduplicationPipeline:
             duplicate_pairs=validated_pairs,
             statistics=statistics
         )
-    
+        
     def run(
         self,
         df: pd.DataFrame,
@@ -482,16 +482,30 @@ class DeduplicationPipeline:
                         removed_pairs=pd.DataFrame()
                     )
                 else:
-                    validation_result = self.validator.validate(match_result)
+                    # With checkpoint parameters
+                    validation_result = self.validator.validate(
+                        match_result,
+                        original_df=working_df,
+                        checkpointer=self.checkpointer,
+                        data_hash=data_hash,
+                        resume=resume
+                    )
                     if not validation_result.validated_pairs.empty:
                         self.checkpointer.save(validation_result.validated_pairs, 'validation', data_hash)
             else:
-                validation_result = self.validator.validate(match_result)
+                # : with checkpoint parameters
+                validation_result = self.validator.validate(
+                    match_result,
+                    original_df=working_df,
+                    checkpointer=self.checkpointer,
+                    data_hash=data_hash,
+                    resume=resume
+                )
                 if self.checkpoint_enabled and not validation_result.validated_pairs.empty:
                     self.checkpointer.save(validation_result.validated_pairs, 'validation', data_hash)
             
             print(f"  Validated: {len(validation_result.validated_pairs)} pairs kept, "
-                  f"{len(validation_result.removed_pairs)} removed")
+                f"{len(validation_result.removed_pairs)} removed")
             
             pairs_for_clustering = validation_result.validated_pairs
         else:
@@ -509,6 +523,7 @@ class DeduplicationPipeline:
         
         return result
 
+
     def run_cross_dataset(
         self,
         df1: pd.DataFrame,
@@ -521,7 +536,7 @@ class DeduplicationPipeline:
         additional_columns2: Optional[List[str]] = None,
         resume: bool = True
     ) -> CrossDatasetResult:
-        """Run cross-dataset deduplication between two dataframes"""
+        """Run cross-dataset deduplication between two dataframes with checkpoint support"""
         
         # Check if matcher supports cross-dataset matching
         if not hasattr(self.matcher, 'find_cross_matches'):
@@ -529,18 +544,49 @@ class DeduplicationPipeline:
         
         print(f"Cross-dataset matching: {len(df1)} entities in df1 vs {len(df2)} entities in df2")
         
+        # Compute combined data hash for checkpointing
+        data_hash = None
+        if self.checkpoint_enabled:
+            # Standardize column names for hashing
+            df1_for_hash = df1.rename(columns={id_column1: 'id', name_column1: 'name'})
+            df2_for_hash = df2.rename(columns={id_column2: 'id', name_column2: 'name'})
+            
+            hash1 = self._compute_data_hash(df1_for_hash)
+            hash2 = self._compute_data_hash(df2_for_hash)
+            data_hash = f"{hash1}_{hash2}"
+        
         # Stage 1: Cross-dataset matching
         print(f"Stage 1: Finding cross-dataset matches...")
         
-        match_result = self.matcher.find_cross_matches(
-            df1, df2,
-            id_column1=id_column1,
-            name_column1=name_column1,
-            id_column2=id_column2, 
-            name_column2=name_column2,
-            additional_columns1=additional_columns1,
-            additional_columns2=additional_columns2
-        )
+        if self.checkpoint_enabled and resume:
+            match_result_df = self.checkpointer.load('cross_matching', data_hash)
+            if match_result_df is not None:
+                print(f"  Loaded {len(match_result_df)} matches from checkpoint")
+                match_result = MatchResult(pairs=match_result_df)
+            else:
+                match_result = self.matcher.find_cross_matches(
+                    df1, df2,
+                    id_column1=id_column1,
+                    name_column1=name_column1,
+                    id_column2=id_column2, 
+                    name_column2=name_column2,
+                    additional_columns1=additional_columns1,
+                    additional_columns2=additional_columns2
+                )
+                if not match_result.pairs.empty:
+                    self.checkpointer.save(match_result.pairs, 'cross_matching', data_hash)
+        else:
+            match_result = self.matcher.find_cross_matches(
+                df1, df2,
+                id_column1=id_column1,
+                name_column1=name_column1,
+                id_column2=id_column2, 
+                name_column2=name_column2,
+                additional_columns1=additional_columns1,
+                additional_columns2=additional_columns2
+            )
+            if self.checkpoint_enabled and not match_result.pairs.empty:
+                self.checkpointer.save(match_result.pairs, 'cross_matching', data_hash)
         
         print(f"  Found {len(match_result.pairs)} cross-dataset matches")
         
@@ -554,10 +600,39 @@ class DeduplicationPipeline:
                 df2.rename(columns={id_column2: 'id', name_column2: 'name'})
             ], ignore_index=True)
             
-            validation_result = self.validator.validate(match_result, original_df=combined_df)
+            if self.checkpoint_enabled and resume:
+                validated_df = self.checkpointer.load('cross_validation', data_hash)
+                if validated_df is not None:
+                    print(f"  Loaded {len(validated_df)} validated pairs from checkpoint")
+                    validation_result = ValidationResult(
+                        validated_pairs=validated_df,
+                        removed_pairs=pd.DataFrame()
+                    )
+                else:
+                    # With checkpoint parameters
+                    validation_result = self.validator.validate(
+                        match_result,
+                        original_df=combined_df,
+                        checkpointer=self.checkpointer,
+                        data_hash=data_hash,
+                        resume=resume
+                    )
+                    if not validation_result.validated_pairs.empty:
+                        self.checkpointer.save(validation_result.validated_pairs, 'cross_validation', data_hash)
+            else:
+                # With  Added checkpoint parameters
+                validation_result = self.validator.validate(
+                    match_result,
+                    original_df=combined_df,
+                    checkpointer=self.checkpointer,
+                    data_hash=data_hash,
+                    resume=resume
+                )
+                if self.checkpoint_enabled and not validation_result.validated_pairs.empty:
+                    self.checkpointer.save(validation_result.validated_pairs, 'cross_validation', data_hash)
             
             print(f"  Validated: {len(validation_result.validated_pairs)} pairs kept, "
-                  f"{len(validation_result.removed_pairs)} removed")
+                f"{len(validation_result.removed_pairs)} removed")
             
             pairs_for_result = validation_result.validated_pairs
         else:
@@ -565,16 +640,15 @@ class DeduplicationPipeline:
         
         # Create cross-dataset result
         result = self._create_cross_dataset_result(df1, df2, pairs_for_result, 
-                                                 id_column1, name_column1, 
-                                                 id_column2, name_column2)
+                                                id_column1, name_column1, 
+                                                id_column2, name_column2)
         
         print(f"\nCross-dataset matching complete:")
         print(f"  DF1 entities: {len(df1)}")
         print(f"  DF2 entities: {len(df2)}")
         print(f"  Cross-matches found: {len(pairs_for_result)}")
         
-        return result
-
+        return result   
     def _create_cross_dataset_result(
         self, 
         df1: pd.DataFrame, 
