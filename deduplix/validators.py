@@ -557,85 +557,85 @@ class LLMValidator(Validator):
  
     # ---------- Public API ----------
 
-   def validate(self, match_result: MatchResult, original_df: pd.DataFrame = None, **kwargs) -> ValidationResult:
-    """
-    Validate matches with optional metadata context and custom rules
-    
-    Parameters
-    ----------
-    match_result : MatchResult
-        The matches to validate
-    original_df : pd.DataFrame, optional
-        Original dataframe with metadata columns for enhanced validation
-    **kwargs
-        Additional parameters (for compatibility)
-    
-    Returns
-    -------
-    ValidationResult
-        Results of the validation process
-    """
-    pairs_df = match_result.pairs.copy()
-    
-    if pairs_df.empty:
-        return ValidationResult(
-            validated_pairs=pd.DataFrame(),
-            removed_pairs=pd.DataFrame(),
-            metadata={"message": "No pairs to validate"},
-        )
+    def validate(self, match_result: MatchResult, original_df: pd.DataFrame = None, **kwargs) -> ValidationResult:
+        """
+        Validate matches with optional metadata context and custom rules
+        
+        Parameters
+        ----------
+        match_result : MatchResult
+            The matches to validate
+        original_df : pd.DataFrame, optional
+            Original dataframe with metadata columns for enhanced validation
+        **kwargs
+            Additional parameters (for compatibility)
+        
+        Returns
+        -------
+        ValidationResult
+            Results of the validation process
+        """
+        pairs_df = match_result.pairs.copy()
+        
+        if pairs_df.empty:
+            return ValidationResult(
+                validated_pairs=pd.DataFrame(),
+                removed_pairs=pd.DataFrame(),
+                metadata={"message": "No pairs to validate"},
+            )
 
-    # Create batches for LLM processing
-    batches = [
-        pairs_df.iloc[i : i + self.batch_size]
-        for i in range(0, len(pairs_df), self.batch_size)
-    ]
+        # Create batches for LLM processing
+        batches = [
+            pairs_df.iloc[i : i + self.batch_size]
+            for i in range(0, len(pairs_df), self.batch_size)
+        ]
 
-    # Process batches in parallel
-    all_decisions: Dict[int, Dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
-        futures = {
-            ex.submit(self._process_batch, batch, original_df): batch 
-            for batch in batches
-        }
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="LLM validation"):
-            try:
-                all_decisions.update(fut.result())
-            except Exception as e:
-                print(f"Error processing batch: {e}")
+        # Process batches in parallel
+        all_decisions: Dict[int, Dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
+            futures = {
+                ex.submit(self._process_batch, batch, original_df): batch 
+                for batch in batches
+            }
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="LLM validation"):
+                try:
+                    all_decisions.update(fut.result())
+                except Exception as e:
+                    print(f"Error processing batch: {e}")
 
-    # Collect results
-    validated_rows, removed_rows = [], []
-    
-    for idx, row in pairs_df.iterrows():
-        row_dict = row.to_dict()
-        if idx in all_decisions:
-            dec = all_decisions[idx]
-            row_dict["validation_reason"] = dec.get("reason", "")
-            if dec.get("is_duplicate", True):
-                validated_rows.append(row_dict)
+        # Collect results
+        validated_rows, removed_rows = [], []
+        
+        for idx, row in pairs_df.iterrows():
+            row_dict = row.to_dict()
+            if idx in all_decisions:
+                dec = all_decisions[idx]
+                row_dict["validation_reason"] = dec.get("reason", "")
+                if dec.get("is_duplicate", True):
+                    validated_rows.append(row_dict)
+                else:
+                    removed_rows.append(row_dict)
             else:
-                removed_rows.append(row_dict)
-        else:
-            row_dict["validation_reason"] = "No LLM decision - kept by default"
-            validated_rows.append(row_dict)
+                row_dict["validation_reason"] = "No LLM decision - kept by default"
+                validated_rows.append(row_dict)
 
-    validated_df = pd.DataFrame(validated_rows) if validated_rows else pd.DataFrame()
-    removed_df = pd.DataFrame(removed_rows) if removed_rows else pd.DataFrame()
+        validated_df = pd.DataFrame(validated_rows) if validated_rows else pd.DataFrame()
+        removed_df = pd.DataFrame(removed_rows) if removed_rows else pd.DataFrame()
 
-    # Prepare metadata
-    meta = {
-        "model": self.model if self.provider != "databricks" else (self.databricks_endpoint or self.model),
-        "provider": self.provider,
-        "batches_processed": len(batches),
-        "validated_count": len(validated_df),
-        "removed_count": len(removed_df),
-        "validation_rate": len(validated_df) / len(match_result.pairs) if len(match_result.pairs) else 0.0,
-        "custom_rules_applied": bool(self.custom_rules),
-        "metadata_columns_used": self.metadata_columns if original_df is not None else [],
-    }
+        # Prepare metadata
+        meta = {
+            "model": self.model if self.provider != "databricks" else (self.databricks_endpoint or self.model),
+            "provider": self.provider,
+            "batches_processed": len(batches),
+            "validated_count": len(validated_df),
+            "removed_count": len(removed_df),
+            "validation_rate": len(validated_df) / len(match_result.pairs) if len(match_result.pairs) else 0.0,
+            "custom_rules_applied": bool(self.custom_rules),
+            "metadata_columns_used": self.metadata_columns if original_df is not None else [],
+        }
 
-    return ValidationResult(
-        validated_pairs=validated_df,
-        removed_pairs=removed_df,
-        metadata=meta,
-    )
+        return ValidationResult(
+            validated_pairs=validated_df,
+            removed_pairs=removed_df,
+            metadata=meta,
+        )
