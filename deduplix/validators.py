@@ -12,17 +12,139 @@ from .core import Validator, ValidationResult, MatchResult
 
 
 class RuleBasedValidator(Validator):
-    """Simple rule-based validation"""
+    """Simple Rule-based validation """
     
-    def __init__(self, rules: Optional[List[Callable]] = None, min_score: float = 90.0):
+    def __init__(
+        self, 
+        min_score: float = 90.0,
+        metadata_rules: Optional[List[Dict[str, Any]]] = None,
+        custom_rules: Optional[List[Callable]] = None
+    ):
+        """
+        Parameters
+        ----------
+        min_score : float
+            Minimum similarity score threshold (always applied)
+        metadata_rules : Optional[List[Dict[str, Any]]]
+            List of metadata rules. Each rule is a dict with:
+            {
+                'column': 'country',           # Column name to check
+                'operation': 'exact',          # 'exact', 'fuzzy', 'inequality'
+                'fuzzy_threshold': 80,         # For fuzzy matching (optional)
+                'max_diff_percent': 50,        # For inequality (optional)
+                'comparator': '<='             # For inequality: '<', '>', '<=', '>=' (optional)
+            }
+        custom_rules : Optional[List[Callable]]
+            Custom rule functions: func(row, original_df) -> bool
+        
+        Examples
+        --------
+        >>> validator = RuleBasedValidator(
+        ...     min_score=85.0,
+        ...     metadata_rules=[
+        ...         {'column': 'country', 'operation': 'exact'},
+        ...         {'column': 'industry', 'operation': 'fuzzy', 'fuzzy_threshold': 80},
+        ...         {'column': 'revenue', 'operation': 'inequality', 'max_diff_percent': 50}
+        ...     ]
+        ... )
+        """
         self.min_score = min_score
-        self.rules = rules or [self.default_rule]
+        self.metadata_rules = metadata_rules or []
+        self.custom_rules = custom_rules or []
     
-    def default_rule(self, row: pd.Series) -> bool:
-        """Default validation rule - accept high similarity scores"""
-        return row['similarity_score'] >= self.min_score
+    def _check_score(self, row: pd.Series) -> tuple[bool, str]:
+        """Check similarity score threshold"""
+        if row['similarity_score'] >= self.min_score:
+            return True, ""
+        return False, f"Score {row['similarity_score']:.1f} < threshold {self.min_score}"
     
-    def validate(self, match_result: MatchResult, **kwargs) -> ValidationResult:
+    def _check_exact_match(self, row: pd.Series, original_df: pd.DataFrame, column: str) -> tuple[bool, str]:
+        """Check if column values match exactly"""
+        if column not in original_df.columns:
+            return True, ""
+        
+        df1 = original_df[original_df['id'] == row['id1']]
+        df2 = original_df[original_df['id'] == row['id2']]
+        
+        if len(df1) == 0 or len(df2) == 0:
+            return True, ""
+        
+        val1 = df1[column].iloc[0]
+        val2 = df2[column].iloc[0]
+        
+        if pd.notna(val1) and pd.notna(val2) and val1 != val2:
+            return False, f"{column}: {val1} != {val2}"
+        
+        return True, ""
+    
+    def _check_fuzzy_match(self, row: pd.Series, original_df: pd.DataFrame, column: str, threshold: float = 80.0) -> tuple[bool, str]:
+        """Check if column values fuzzy match"""
+        if column not in original_df.columns:
+            return True, ""
+        
+        from rapidfuzz import fuzz
+        
+        df1 = original_df[original_df['id'] == row['id1']]
+        df2 = original_df[original_df['id'] == row['id2']]
+        
+        if len(df1) == 0 or len(df2) == 0:
+            return True, ""
+        
+        val1 = df1[column].iloc[0]
+        val2 = df2[column].iloc[0]
+        
+        if pd.notna(val1) and pd.notna(val2):
+            score = fuzz.ratio(str(val1), str(val2))
+            if score < threshold:
+                return False, f"{column}: fuzzy score {score:.1f} < {threshold}"
+        
+        return True, ""
+    
+    def _check_inequality(self, row: pd.Series, original_df: pd.DataFrame, column: str, 
+                         max_diff_percent: float = None, comparator: str = '<=') -> tuple[bool, str]:
+        """Check if numeric column values are within threshold"""
+        if column not in original_df.columns:
+            return True, ""
+        
+        df1 = original_df[original_df['id'] == row['id1']]
+        df2 = original_df[original_df['id'] == row['id2']]
+        
+        if len(df1) == 0 or len(df2) == 0:
+            return True, ""
+        
+        val1 = df1[column].iloc[0]
+        val2 = df2[column].iloc[0]
+        
+        if pd.notna(val1) and pd.notna(val2):
+            try:
+                val1 = float(val1)
+                val2 = float(val2)
+                
+                if max_diff_percent is not None:
+                    # Check percentage difference
+                    max_val = max(val1, val2)
+                    if max_val > 0:
+                        diff_percent = abs(val1 - val2) / max_val * 100
+                        if diff_percent > max_diff_percent:
+                            return False, f"{column}: diff {diff_percent:.1f}% > {max_diff_percent}%"
+                else:
+                    # Check absolute comparison
+                    diff = abs(val1 - val2)
+                    if comparator == '<' and not (diff < max_diff_percent):
+                        return False, f"{column}: diff {diff} not < {max_diff_percent}"
+                    elif comparator == '>' and not (diff > max_diff_percent):
+                        return False, f"{column}: diff {diff} not > {max_diff_percent}"
+                    elif comparator == '<=' and not (diff <= max_diff_percent):
+                        return False, f"{column}: diff {diff} not <= {max_diff_percent}"
+                    elif comparator == '>=' and not (diff >= max_diff_percent):
+                        return False, f"{column}: diff {diff} not >= {max_diff_percent}"
+                        
+            except (ValueError, TypeError):
+                pass  # Non-numeric values, skip
+        
+        return True, ""
+    
+    def validate(self, match_result: MatchResult, original_df: pd.DataFrame = None, **kwargs) -> ValidationResult:
         """Apply rules to validate matches"""
         
         if match_result.pairs.empty:
@@ -36,16 +158,61 @@ class RuleBasedValidator(Validator):
         removed = []
         
         for _, row in match_result.pairs.iterrows():
-            if all(rule(row) for rule in self.rules):
-                validated.append(row.to_dict())
+            passed = True
+            reasons = []
+            
+            # Check similarity score (always)
+            score_passed, score_reason = self._check_score(row)
+            if not score_passed:
+                passed = False
+                reasons.append(score_reason)
+            
+            # Check metadata rules
+            if original_df is not None:
+                for rule in self.metadata_rules:
+                    column = rule.get('column')
+                    operation = rule.get('operation', 'exact')
+                    
+                    if operation == 'exact':
+                        rule_passed, reason = self._check_exact_match(row, original_df, column)
+                    elif operation == 'fuzzy':
+                        threshold = rule.get('fuzzy_threshold', 80.0)
+                        rule_passed, reason = self._check_fuzzy_match(row, original_df, column, threshold)
+                    elif operation == 'inequality':
+                        max_diff = rule.get('max_diff_percent')
+                        comparator = rule.get('comparator', '<=')
+                        rule_passed, reason = self._check_inequality(row, original_df, column, max_diff, comparator)
+                    else:
+                        continue
+                    
+                    if not rule_passed:
+                        passed = False
+                        reasons.append(reason)
+            
+            # Check custom rules
+            for custom_rule in self.custom_rules:
+                try:
+                    if not custom_rule(row, original_df):
+                        passed = False
+                        reasons.append(f"Custom rule failed: {custom_rule.__name__}")
+                except Exception as e:
+                    print(f"Error in custom rule {custom_rule.__name__}: {e}")
+            
+            row_dict = row.to_dict()
+            row_dict['validation_reason'] = "; ".join(reasons) if reasons else "Passed all rules"
+            
+            if passed:
+                validated.append(row_dict)
             else:
-                removed.append(row.to_dict())
+                removed.append(row_dict)
         
         validated_df = pd.DataFrame(validated) if validated else pd.DataFrame()
         removed_df = pd.DataFrame(removed) if removed else pd.DataFrame()
         
         metadata = {
-            'rules_applied': len(self.rules),
+            'min_score': self.min_score,
+            'metadata_rules_count': len(self.metadata_rules),
+            'custom_rules_count': len(self.custom_rules),
             'validated_count': len(validated_df),
             'removed_count': len(removed_df)
         }
@@ -55,7 +222,6 @@ class RuleBasedValidator(Validator):
             removed_pairs=removed_df,
             metadata=metadata
         )
-
 
 class LLMValidator(Validator):
     """
@@ -388,178 +554,88 @@ class LLMValidator(Validator):
                     return {idx: {"is_duplicate": True, "reason": "LLM validation failed"}
                             for idx in batch.index}
 
-    # ---------- Pre-filtering based on hard rules ----------
-
-    def _apply_hard_rules(self, pairs_df: pd.DataFrame, original_df: pd.DataFrame) -> tuple[pd.DataFrame, List[Dict]]:
-        """Apply hard rules to pre-filter pairs before LLM validation"""
-        if original_df is None:
-            return pairs_df, []
-            
-        filtered_pairs = []
-        removed_by_rule = []
-        
-        for _, row in pairs_df.iterrows():
-            should_remove = False
-            removal_reason = ""
-            
-            # Country matching rule
-            if self.custom_rules.get('require_same_country') and 'country' in original_df.columns:
-                df1_match = original_df[original_df['id'] == row['id1']]
-                df2_match = original_df[original_df['id'] == row['id2']]
-                
-                if len(df1_match) > 0 and len(df2_match) > 0:
-                    country1 = df1_match['country'].iloc[0]
-                    country2 = df2_match['country'].iloc[0]
-                    
-                    if pd.notna(country1) and pd.notna(country2) and country1 != country2:
-                        should_remove = True
-                        removal_reason = f'Different countries: {country1} vs {country2}'
-            
-            # Industry matching rule
-            if not should_remove and self.custom_rules.get('require_same_industry') and 'industry' in original_df.columns:
-                df1_match = original_df[original_df['id'] == row['id1']]
-                df2_match = original_df[original_df['id'] == row['id2']]
-                
-                if len(df1_match) > 0 and len(df2_match) > 0:
-                    industry1 = df1_match['industry'].iloc[0]
-                    industry2 = df2_match['industry'].iloc[0]
-                    
-                    if pd.notna(industry1) and pd.notna(industry2) and industry1 != industry2:
-                        should_remove = True
-                        removal_reason = f'Different industries: {industry1} vs {industry2}'
-            
-            # Revenue difference rule
-            if not should_remove and 'max_revenue_difference_percent' in self.custom_rules and 'revenue' in original_df.columns:
-                df1_match = original_df[original_df['id'] == row['id1']]
-                df2_match = original_df[original_df['id'] == row['id2']]
-                
-                if len(df1_match) > 0 and len(df2_match) > 0:
-                    revenue1 = df1_match['revenue'].iloc[0]
-                    revenue2 = df2_match['revenue'].iloc[0]
-                    
-                    if pd.notna(revenue1) and pd.notna(revenue2) and revenue1 > 0 and revenue2 > 0:
-                        max_rev = max(revenue1, revenue2)
-                        min_rev = min(revenue1, revenue2)
-                        diff_percent = ((max_rev - min_rev) / max_rev) * 100
-                        
-                        if diff_percent > self.custom_rules['max_revenue_difference_percent']:
-                            should_remove = True
-                            removal_reason = f'Revenue difference too large: {diff_percent:.1f}% > {self.custom_rules["max_revenue_difference_percent"]}%'
-            
-            if should_remove:
-                row_dict = row.to_dict()
-                row_dict['validation_reason'] = removal_reason
-                removed_by_rule.append(row_dict)
-            else:
-                filtered_pairs.append(row)
-        
-        if removed_by_rule:
-            print(f"Pre-filtered {len(removed_by_rule)} pairs due to hard rules")
-        
-        return pd.DataFrame(filtered_pairs) if filtered_pairs else pd.DataFrame(), removed_by_rule
-
+ 
     # ---------- Public API ----------
 
-    def validate(self, match_result: MatchResult, original_df: pd.DataFrame = None, **kwargs) -> ValidationResult:
-        """
-        Validate matches with optional metadata context and custom rules
-        
-        Parameters
-        ----------
-        match_result : MatchResult
-            The matches to validate
-        original_df : pd.DataFrame, optional
-            Original dataframe with metadata columns for enhanced validation
-        **kwargs
-            Additional parameters (for compatibility)
-        
-        Returns
-        -------
-        ValidationResult
-            Results of the validation process
-        """
-        pairs_df = match_result.pairs.copy()
-        
-        if pairs_df.empty:
-            return ValidationResult(
-                validated_pairs=pd.DataFrame(),
-                removed_pairs=pd.DataFrame(),
-                metadata={"message": "No pairs to validate"},
-            )
-
-        # Apply hard rules pre-filtering if configured
-        removed_by_rules = []
-        if self.custom_rules and original_df is not None:
-            pairs_df, removed_by_rules = self._apply_hard_rules(pairs_df, original_df)
-            
-            if pairs_df.empty:
-                # All pairs were filtered out by hard rules
-                return ValidationResult(
-                    validated_pairs=pd.DataFrame(),
-                    removed_pairs=pd.DataFrame(removed_by_rules) if removed_by_rules else pd.DataFrame(),
-                    metadata={
-                        "message": "All pairs filtered by hard rules",
-                        "model": self.model,
-                        "provider": self.provider,
-                        "removed_by_rules": len(removed_by_rules),
-                    }
-                )
-
-        # Create batches for LLM processing
-        batches = [
-            pairs_df.iloc[i : i + self.batch_size]
-            for i in range(0, len(pairs_df), self.batch_size)
-        ]
-
-        # Process batches in parallel
-        all_decisions: Dict[int, Dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
-            futures = {
-                ex.submit(self._process_batch, batch, original_df): batch 
-                for batch in batches
-            }
-            for fut in tqdm(as_completed(futures), total=len(futures), desc="LLM validation"):
-                try:
-                    all_decisions.update(fut.result())
-                except Exception as e:
-                    print(f"Error processing batch: {e}")
-
-        # Collect results
-        validated_rows, removed_rows = [], []
-        
-        for idx, row in pairs_df.iterrows():
-            row_dict = row.to_dict()
-            if idx in all_decisions:
-                dec = all_decisions[idx]
-                row_dict["validation_reason"] = dec.get("reason", "")
-                if dec.get("is_duplicate", True):
-                    validated_rows.append(row_dict)
-                else:
-                    removed_rows.append(row_dict)
-            else:
-                row_dict["validation_reason"] = "No LLM decision - kept by default"
-                validated_rows.append(row_dict)
-
-        # Add hard rule removals to removed pairs
-        removed_rows.extend(removed_by_rules)
-
-        validated_df = pd.DataFrame(validated_rows) if validated_rows else pd.DataFrame()
-        removed_df = pd.DataFrame(removed_rows) if removed_rows else pd.DataFrame()
-
-        # Prepare metadata
-        meta = {
-            "model": self.model if self.provider != "databricks" else (self.databricks_endpoint or self.model),
-            "provider": self.provider,
-            "batches_processed": len(batches),
-            "validated_count": len(validated_df),
-            "removed_count": len(removed_df),
-            "validation_rate": len(validated_df) / len(match_result.pairs) if len(match_result.pairs) else 0.0,
-            "custom_rules_applied": bool(self.custom_rules),
-            "metadata_columns_used": self.metadata_columns if original_df is not None else [],
-        }
-
+   def validate(self, match_result: MatchResult, original_df: pd.DataFrame = None, **kwargs) -> ValidationResult:
+    """
+    Validate matches with optional metadata context and custom rules
+    
+    Parameters
+    ----------
+    match_result : MatchResult
+        The matches to validate
+    original_df : pd.DataFrame, optional
+        Original dataframe with metadata columns for enhanced validation
+    **kwargs
+        Additional parameters (for compatibility)
+    
+    Returns
+    -------
+    ValidationResult
+        Results of the validation process
+    """
+    pairs_df = match_result.pairs.copy()
+    
+    if pairs_df.empty:
         return ValidationResult(
-            validated_pairs=validated_df,
-            removed_pairs=removed_df,
-            metadata=meta,
+            validated_pairs=pd.DataFrame(),
+            removed_pairs=pd.DataFrame(),
+            metadata={"message": "No pairs to validate"},
         )
+
+    # Create batches for LLM processing
+    batches = [
+        pairs_df.iloc[i : i + self.batch_size]
+        for i in range(0, len(pairs_df), self.batch_size)
+    ]
+
+    # Process batches in parallel
+    all_decisions: Dict[int, Dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
+        futures = {
+            ex.submit(self._process_batch, batch, original_df): batch 
+            for batch in batches
+        }
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="LLM validation"):
+            try:
+                all_decisions.update(fut.result())
+            except Exception as e:
+                print(f"Error processing batch: {e}")
+
+    # Collect results
+    validated_rows, removed_rows = [], []
+    
+    for idx, row in pairs_df.iterrows():
+        row_dict = row.to_dict()
+        if idx in all_decisions:
+            dec = all_decisions[idx]
+            row_dict["validation_reason"] = dec.get("reason", "")
+            if dec.get("is_duplicate", True):
+                validated_rows.append(row_dict)
+            else:
+                removed_rows.append(row_dict)
+        else:
+            row_dict["validation_reason"] = "No LLM decision - kept by default"
+            validated_rows.append(row_dict)
+
+    validated_df = pd.DataFrame(validated_rows) if validated_rows else pd.DataFrame()
+    removed_df = pd.DataFrame(removed_rows) if removed_rows else pd.DataFrame()
+
+    # Prepare metadata
+    meta = {
+        "model": self.model if self.provider != "databricks" else (self.databricks_endpoint or self.model),
+        "provider": self.provider,
+        "batches_processed": len(batches),
+        "validated_count": len(validated_df),
+        "removed_count": len(removed_df),
+        "validation_rate": len(validated_df) / len(match_result.pairs) if len(match_result.pairs) else 0.0,
+        "custom_rules_applied": bool(self.custom_rules),
+        "metadata_columns_used": self.metadata_columns if original_df is not None else [],
+    }
+
+    return ValidationResult(
+        validated_pairs=validated_df,
+        removed_pairs=removed_df,
+        metadata=meta,
+    )
