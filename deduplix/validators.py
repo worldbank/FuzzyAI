@@ -2,7 +2,7 @@ import os
 import re
 import json
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any,Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
