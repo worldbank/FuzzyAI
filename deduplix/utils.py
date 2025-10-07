@@ -1,9 +1,127 @@
-#utils.py
+
 import yaml
 import json
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional
 import pandas as pd
+
+def deep_clean_for_excel(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove illegal control characters from Excel cell contents.
+    
+    Excel has strict rules about what characters are allowed in cells.
+    This function removes all illegal control characters and normalizes whitespace.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe to clean
+        
+    Returns
+    -------
+    pd.DataFrame
+        Cleaned dataframe safe for Excel export
+        
+    Examples
+    --------
+    >>> df_clean = deep_clean_for_excel(df)
+    >>> df_clean.to_excel('output.xlsx', index=False)
+    """
+    df = df.copy()
+    
+    # Pattern to match illegal control characters in Excel
+    # Excel doesn't allow: 0x00-0x08, 0x0B-0x0C, 0x0E-0x1F, 0x7F
+    illegal_pattern = re.compile(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]')
+    
+    def clean_string(s):
+        if pd.isna(s):
+            return s
+        s = str(s)
+        
+        s = illegal_pattern.sub('', s)
+        
+        s = ' '.join(s.split())
+        return s
+    
+    
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].apply(clean_string)
+    
+    return df
+
+
+def save_to_excel_safe(
+    df: pd.DataFrame, 
+    filepath: str, 
+    sheet_name: str = "Sheet1",
+    clean: bool = True,
+    **kwargs
+):
+    """
+    Save dataframe to Excel with automatic cleaning of illegal characters.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataframe to save
+    filepath : str
+        Output Excel file path
+    sheet_name : str
+        Sheet name in Excel file (default: 'Sheet1')
+    clean : bool
+        Whether to clean illegal characters (default: True)
+    **kwargs
+        Additional arguments passed to to_excel()
+        
+    Examples
+    --------
+    >>> save_to_excel_safe(df, 'output.xlsx', sheet_name='Data')
+    """
+    if clean:
+        df = deep_clean_for_excel(df)
+    
+    df.to_excel(filepath, sheet_name=sheet_name, index=False, **kwargs)
+    print(f"✓ Saved to {filepath} (sheet: {sheet_name})")
+
+
+def save_multiple_sheets_safe(
+    dataframes: Dict[str, pd.DataFrame],
+    filepath: str,
+    clean: bool = True,
+    **kwargs
+):
+    """
+    Save multiple dataframes to different sheets in one Excel file.
+    
+    Parameters
+    ----------
+    dataframes : Dict[str, pd.DataFrame]
+        Dictionary mapping sheet names to dataframes
+    filepath : str
+        Output Excel file path
+    clean : bool
+        Whether to clean illegal characters (default: True)
+    **kwargs
+        Additional arguments passed to to_excel()
+        
+    Examples
+    --------
+    >>> sheets = {
+    ...     'Consolidated': consolidated_df,
+    ...     'All_Matches': all_matches_df,
+    ...     'Summary': summary_df
+    ... }
+    >>> save_multiple_sheets_safe(sheets, 'output.xlsx')
+    """
+    with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        for sheet_name, df in dataframes.items():
+            if clean:
+                df = deep_clean_for_excel(df)
+            df.to_excel(writer, sheet_name=sheet_name, index=False, **kwargs)
+    
+    print(f"✓ Saved {len(dataframes)} sheets to {filepath}")
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -137,6 +255,8 @@ def analyze_duplicates(result):
                 stats['groups_by_size'][f'size_{size}'] = int(count)
     
     return stats
+
+
 def remove_duplicates_after_deduplication(
     original_df: pd.DataFrame,
     dedup_result,
@@ -148,11 +268,11 @@ def remove_duplicates_after_deduplication(
     entity_groups = dedup_result.entity_groups.copy()
     entities_to_keep = []
     
-    # Keep singletons
+    # 
     singletons = entity_groups[entity_groups['group_id'] == 0]['entity_id'].tolist()
     entities_to_keep.extend(singletons)
     
-    # Process duplicate groups
+        
     duplicate_groups = entity_groups[entity_groups['group_id'] > 0].groupby('group_id')
     
     for group_id, group_df in duplicate_groups:
@@ -215,11 +335,11 @@ def simple_remove_duplicates(original_df: pd.DataFrame, dedup_result, id_column:
     entity_groups = dedup_result.entity_groups
     entities_to_keep = []
     
-    # Singletons
+
     singletons = entity_groups[entity_groups['group_id'] == 0]['entity_id'].tolist()
     entities_to_keep.extend(singletons)
     
-    # First from each group
+    
     duplicate_groups = entity_groups[entity_groups['group_id'] > 0].groupby('group_id')
     for group_id, group_df in duplicate_groups:
         first_entity = group_df.iloc[0]['entity_id']

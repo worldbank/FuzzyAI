@@ -209,13 +209,13 @@ class CrossDatasetResult:
         return matches.to_dict('records')
     
     def merge_datasets(
-        self, 
-        df1: pd.DataFrame, 
-        df2: pd.DataFrame,
-        how: str = 'inner',
-        suffix1: str = '_df1',
-        suffix2: str = '_df2'
-    ) -> pd.DataFrame:
+                self, 
+                df1: pd.DataFrame, 
+                df2: pd.DataFrame,
+                how: str = 'inner',
+                suffix1: str = '_df1',
+                suffix2: str = '_df2'
+            ) -> pd.DataFrame:
         """Merge datasets based on found matches"""
         
         if self.cross_matches.empty:
@@ -267,8 +267,138 @@ class CrossDatasetResult:
             df2_metadata=data['df2_metadata'],
             statistics=data['statistics']
         )
-
-
+    def consolidate_with_config(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame,
+        config,  # ConsolidationConfig
+        id_column1: Optional[str] = None,
+        id_column2: Optional[str] = None,
+        name_column2: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        Consolidate matches using ConsolidationConfig.
+        
+        For each entity in df1, this selects ONE main match from df2 based on
+        priority rules, and lists all other match IDs in 'other_candidates' column.
+        
+        Parameters
+        ----------
+        df1 : pd.DataFrame
+            First dataset
+        df2 : pd.DataFrame
+            Second dataset
+        config : ConsolidationConfig
+            Consolidation configuration (from consolidation.py)
+        id_column1 : str, optional
+            ID column in df1 (uses metadata if None)
+        id_column2 : str, optional
+            ID column in df2 (uses metadata if None)
+        name_column2 : str, optional
+            Name column in df2 (uses metadata if None)
+            
+        Returns
+        -------
+        pd.DataFrame
+            Consolidated dataframe with columns:
+            - All original df1 columns
+            - main_{id_column2}: Selected match ID
+            - main_{name_column2}: Selected match name
+            - main_similarity_score: Match quality
+            - main_{priority_column}: Priority source (if configured)
+            - other_candidates: Comma-separated other match IDs
+            - total_matches: Number of matches found
+            - all_match_ids: All match IDs (if keep_all_matches=True)
+            
+     
+        """
+        from .consolidation import ConsolidationEngine
+        
+        id_col1 = id_column1 or self.df1_metadata['id_col']
+        id_col2 = id_column2 or self.df2_metadata['id_col']
+        name_col2 = name_column2 or self.df2_metadata['name_col']
+        
+        engine = ConsolidationEngine(config)
+        return engine.consolidate(
+            self.cross_matches,
+            df1,
+            df2,
+            id_col1,
+            id_col2,
+            name_col2
+        )
+    def consolidate_with_llm(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame,
+        config,  # LLMConsolidationConfig
+        id_column1: Optional[str] = None,
+        id_column2: Optional[str] = None,
+        name_column2: Optional[str] = None,
+        checkpointer=None,
+        data_hash: Optional[str] = None,
+        resume: bool = True
+    ) -> pd.DataFrame:
+        """
+        Consolidate matches using LLM-based intelligent selection.
+        
+        Uses an LLM to select the best match for each entity when multiple
+        candidates exist. The LLM considers metadata, similarity scores,
+        and custom instructions to make informed decisions.
+        
+        Parameters
+        ----------
+        df1 : pd.DataFrame
+            First dataset
+        df2 : pd.DataFrame
+            Second dataset
+        config : LLMConsolidationConfig
+            LLM consolidation configuration (from llm_consolidation.py)
+        id_column1 : str, optional
+            ID column in df1 (uses metadata if None)
+        id_column2 : str, optional
+            ID column in df2 (uses metadata if None)
+        name_column2 : str, optional
+            Name column in df2 (uses metadata if None)
+        checkpointer : Checkpointer, optional
+            Checkpointer instance for saving progress
+        data_hash : str, optional
+            Hash for checkpoint files
+        resume : bool
+            Whether to resume from checkpoint (default: True)
+            
+        Returns
+        -------
+        pd.DataFrame
+            Consolidated dataframe with columns:
+            - All original df1 columns
+            - main_{id_column2}: LLM-selected match ID
+            - main_{name_column2}: LLM-selected match name
+            - main_similarity_score: Match quality
+            - llm_reasoning: LLM's explanation for selection
+            - other_candidates: Comma-separated other match IDs
+            - total_matches: Number of matches found
+            
+       
+        """
+        from .llm_consolidation import LLMConsolidationEngine
+        
+        id_col1 = id_column1 or self.df1_metadata['id_col']
+        id_col2 = id_column2 or self.df2_metadata['id_col']
+        name_col2 = name_column2 or self.df2_metadata['name_col']
+        
+        engine = LLMConsolidationEngine(config)
+        return engine.consolidate(
+            self.cross_matches,
+            df1,
+            df2,
+            id_col1,
+            id_col2,
+            name_col2,
+            checkpointer=checkpointer,
+            data_hash=data_hash,
+            resume=resume
+        )
 class Matcher(ABC):
     """Abstract base class for matchers"""
     
