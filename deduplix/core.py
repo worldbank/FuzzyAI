@@ -1,4 +1,3 @@
-#core.py
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -471,10 +470,19 @@ class DeduplicationPipeline:
         self.checkpointer = Checkpointer(checkpoint_dir) if checkpoint else None
     
     def _compute_data_hash(self, df: pd.DataFrame) -> str:
-        """Compute hash of dataframe for checkpoint identification"""
-        # Use shape and sample of data for hash
-        hash_str = f"{df.shape}_{df.iloc[:min(100, len(df))].to_json()}"
-        return hashlib.md5(hash_str.encode()).hexdigest()[:12]
+        """
+        Compute collision-resistant hash of dataframe for checkpoint identification.
+        
+        Uses shape + hash of all entity IDs to ensure different datasets get
+        different hashes, even if they have the same number of rows.
+        """
+        # Hash all IDs - this makes the hash unique to the specific entities
+        id_hash = pd.util.hash_pandas_object(df['id'], index=False).sum()
+        
+    
+        hash_str = f"{df.shape[0]}_{df.shape[1]}_{id_hash}"
+        
+        return hashlib.md5(hash_str.encode()).hexdigest()[:16]
     
     def _remove_symmetric_pairs(self, pairs_df: pd.DataFrame) -> pd.DataFrame:
         """Remove symmetric duplicate pairs (A,B) and (B,A)"""
