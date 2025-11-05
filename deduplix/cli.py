@@ -196,7 +196,61 @@ def show_group(results_dir, entity_id):
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-
+@cli.command()
+@click.option('--input', '-i', required=True, help='Input CSV/Excel file (original data)')
+@click.option('--results', '-r', required=True, help='Deduplication results directory')
+@click.option('--output', '-o', required=True, help='Output file for cleaned data')
+@click.option('--id-column', default='id', help='Column name for entity ID')
+@click.option('--strategy', type=click.Choice(['first', 'last', 'highest_score']), 
+              default='first', help='Strategy for keeping duplicates')
+@click.option('--verbose', is_flag=True, help='Verbose output')
+def remove(input, results, output, id_column, strategy, verbose):
+    """Remove duplicates from original data using deduplication results"""
+    
+    # Load data
+    try:
+        df = load_data(input)
+        if verbose:
+            click.echo(f"Loaded {len(df)} entities")
+    except Exception as e:
+        click.echo(f"Error loading data: {e}", err=True)
+        sys.exit(1)
+    
+    # Load results
+    try:
+        result = DeduplicationResult.load(results)
+        if verbose:
+            click.echo(f"Loaded results")
+    except Exception as e:
+        click.echo(f"Error loading results: {e}", err=True)
+        sys.exit(1)
+    
+    # Remove duplicates
+    try:
+        cleaned_df = result.remove_duplicates(df, id_column=id_column, keep_strategy=strategy)
+        if verbose:
+            click.echo(f"Cleaned: {len(cleaned_df)} entities")
+    except Exception as e:
+        click.echo(f"Error removing duplicates: {e}", err=True)
+        sys.exit(1)
+    
+    # Save
+    try:
+        save_data(cleaned_df, output)
+        click.echo(f"Saved to {output}")
+    except Exception as e:
+        click.echo(f"Error saving: {e}", err=True)
+        sys.exit(1)
+    
+    # Summary
+    summary = result.get_removal_summary(df, cleaned_df)
+    click.echo("\n" + "="*40)
+    click.echo("REMOVAL COMPLETE")
+    click.echo("="*40)
+    click.echo(f"Original: {summary['original_count']:,}")
+    click.echo(f"Cleaned: {summary['cleaned_count']:,}")
+    click.echo(f"Removed: {summary['duplicates_removed']:,}")
+    click.echo(f"Rate: {summary['removal_rate']:.1f}%")
 
 if __name__ == '__main__':
     cli()

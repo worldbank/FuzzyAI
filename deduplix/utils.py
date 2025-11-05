@@ -37,7 +37,7 @@ def save_config(config: Dict[str, Any], output_path: str):
 
 
 def create_sample_config(output_path: str = "deduplix_config.yaml"):
-    """Create a sample configuration file"""
+  
     
     config = {
         'matching': {
@@ -136,3 +136,94 @@ def analyze_duplicates(result):
                 stats['groups_by_size'][f'size_{size}'] = int(count)
     
     return stats
+
+
+def remove_duplicates_after_deduplication(
+    original_df: pd.DataFrame,
+    dedup_result,
+    id_column: str = 'id',
+    keep_strategy: str = 'first'
+) -> pd.DataFrame:
+    """Remove duplicate rows based on deduplication results"""
+
+    entity_groups = dedup_result.entity_groups.copy()
+    entities_to_keep = []
+
+    # Keep singletons (group_id = 0)
+    singletons = entity_groups[entity_groups['group_id'] == 0]['entity_id'].tolist()
+    entities_to_keep.extend(singletons)
+
+    # Process duplicate groups
+    duplicate_groups = entity_groups[entity_groups['group_id'] > 0].groupby('group_id')
+
+    for group_id, group_df in duplicate_groups:
+        group_entities = group_df['entity_id'].tolist()
+
+        if keep_strategy == 'first':
+            original_indices = []
+            for entity_id in group_entities:
+                idx = original_df[original_df[id_column] == entity_id].index
+                if len(idx) > 0:
+                    original_indices.append((entity_id, idx[0]))
+
+            if original_indices:
+                original_indices.sort(key=lambda x: x[1])
+                entities_to_keep.append(original_indices[0][0])
+
+        elif keep_strategy == 'last':
+            original_indices = []
+            for entity_id in group_entities:
+                idx = original_df[original_df[id_column] == entity_id].index
+                if len(idx) > 0:
+                    original_indices.append((entity_id, idx[-1]))
+
+            if original_indices:
+                original_indices.sort(key=lambda x: x[1])
+                entities_to_keep.append(original_indices[-1][0])
+
+        elif keep_strategy == 'highest_score':
+            if not dedup_result.duplicate_pairs.empty:
+                entity_scores = {}
+                for entity_id in group_entities:
+                    pairs_as_id1 = dedup_result.duplicate_pairs[
+                        dedup_result.duplicate_pairs['id1'] == entity_id
+                    ]
+                    pairs_as_id2 = dedup_result.duplicate_pairs[
+                        dedup_result.duplicate_pairs['id2'] == entity_id
+                    ]
+
+                    scores = []
+                    scores.extend(pairs_as_id1['similarity_score'].tolist())
+                    scores.extend(pairs_as_id2['similarity_score'].tolist())
+
+                    entity_scores[entity_id] = sum(scores) / len(scores) if scores else 0
+
+                if entity_scores:
+                    best_entity = max(entity_scores.keys(), key=lambda x: entity_scores[x])
+                    entities_to_keep.append(best_entity)
+                else:
+                    entities_to_keep.append(group_entities[0])
+            else:
+                entities_to_keep.append(group_entities[0])
+        else:
+            entities_to_keep.append(group_entities[0])
+
+    return original_df[original_df[id_column].isin(entities_to_keep)].copy()
+
+
+def simple_remove_duplicates(original_df: pd.DataFrame, dedup_result, id_column: str = 'id'):
+    """Simple removal - keep first entity from each duplicate group"""
+    entity_groups = dedup_result.entity_groups
+    entities_to_keep = []
+
+    # Keep singletons (group_id = 0)
+    singletons = entity_groups[entity_groups['group_id'] == 0]['entity_id'].tolist()
+    entities_to_keep.extend(singletons)
+
+    # Keep first entity from each duplicate group
+    duplicate_groups = entity_groups[entity_groups['group_id'] > 0].groupby('group_id')
+    for group_id, group_df in duplicate_groups:
+        first_entity = group_df.iloc[0]['entity_id']
+        entities_to_keep.append(first_entity)
+
+    return original_df[original_df[id_column].isin(entities_to_keep)].copy()

@@ -33,6 +33,7 @@ setup(
         "tqdm>=4.60.0",
         "click>=8.0.0",
         "pyyaml>=5.4.0",
+        "pydantic>=1.10.0",
     ],
     extras_require={
         "llm": ["openai>=0.27.0"],
