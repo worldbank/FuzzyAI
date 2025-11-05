@@ -230,6 +230,7 @@ class FuzzyMatcher(Matcher):
         
         return results
     
+<<<<<<< HEAD
     def _find_cross_matches_multi_column(
         self,
         df1: pd.DataFrame,
@@ -345,6 +346,8 @@ class FuzzyMatcher(Matcher):
         
         return MatchResult(pairs=best_matches, metadata=metadata)
     
+=======
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
     def find_cross_matches(
         self, 
         df1: pd.DataFrame, 
@@ -353,6 +356,7 @@ class FuzzyMatcher(Matcher):
         name_column1: str = 'name', 
         id_column2: str = 'id',
         name_column2: str = 'name',
+<<<<<<< HEAD
         name_columns1: Optional[List[str]] = None,  # NEW: Multiple name columns for df1
         name_columns2: Optional[List[str]] = None,  # NEW: Multiple name columns for df2
         **kwargs
@@ -403,6 +407,10 @@ class FuzzyMatcher(Matcher):
             )
         
         # Original single-column logic
+=======
+        **kwargs
+    ) -> MatchResult:
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         df1_clean = df1[[id_column1, name_column1]].dropna().copy()
         df2_clean = df2[[id_column2, name_column2]].dropna().copy()
         
