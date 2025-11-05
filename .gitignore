@@ -87,9 +87,13 @@ output/
 cli_output/
 llm_test_output/
 test_config.yaml
+<<<<<<< HEAD
 .claude/agents/mle-code-reviewer.md
 .gitignore
 deduplix/code_reviewer.py
 example_code_review.py
 run_review.py
 mle_review_report.md
+=======
+test.ipynb
+

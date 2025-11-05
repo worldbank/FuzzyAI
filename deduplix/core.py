@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+=======
+
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 import pandas as pd
@@ -7,6 +11,7 @@ import json
 import hashlib
 from datetime import datetime
 from abc import ABC, abstractmethod
+<<<<<<< HEAD
 import warnings
 from .utils import remove_duplicates_after_deduplication
 from .validation import validate_deduplication_input, validate_cross_dataset_input
@@ -15,6 +20,9 @@ from .exceptions import (
     CheckpointError, ConfigurationError, handle_and_reraise
 )
 from .checkpointing import BaseCheckpointer, FileCheckpointer, DatabaseCheckpointer
+=======
+from .utils import remove_duplicates_after_deduplication
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
 
 @dataclass
 class MatchResult:
@@ -743,12 +751,16 @@ class DeduplicationPipeline:
         name_column1: str = 'name',
         id_column2: str = 'id', 
         name_column2: str = 'name',
+<<<<<<< HEAD
         name_columns1: Optional[List[str]] = None,  
         name_columns2: Optional[List[str]] = None,  
+=======
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         additional_columns1: Optional[List[str]] = None,
         additional_columns2: Optional[List[str]] = None,
         resume: bool = True
     ) -> CrossDatasetResult:
+<<<<<<< HEAD
         """
         Run cross-dataset deduplication between two dataframes with checkpoint support.
         
@@ -786,11 +798,15 @@ class DeduplicationPipeline:
         ...     name_columns2=['name', 'trading_name']
         ... )
         """
+=======
+        """Run cross-dataset deduplication between two dataframes with checkpoint support"""
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         
         # Check if matcher supports cross-dataset matching
         if not hasattr(self.matcher, 'find_cross_matches'):
             raise ValueError("Matcher does not support cross-dataset matching")
         
+<<<<<<< HEAD
         # Comprehensive input validation for cross-dataset matching
         print("Stage 0: Validating input datasets...")
         try:
@@ -813,12 +829,21 @@ class DeduplicationPipeline:
 
         print(f"Cross-dataset matching: {len(df1_validated)} entities in df1 vs {len(df2_validated)} entities in df2")
 
+=======
+        print(f"Cross-dataset matching: {len(df1)} entities in df1 vs {len(df2)} entities in df2")
+        
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         # Compute combined data hash for checkpointing
         data_hash = None
         if self.checkpoint_enabled:
             # Standardize column names for hashing
+<<<<<<< HEAD
             df1_for_hash = df1_validated.rename(columns={id_column1: 'id', name_column1: 'name'})
             df2_for_hash = df2_validated.rename(columns={id_column2: 'id', name_column2: 'name'})
+=======
+            df1_for_hash = df1.rename(columns={id_column1: 'id', name_column1: 'name'})
+            df2_for_hash = df2.rename(columns={id_column2: 'id', name_column2: 'name'})
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
             
             hash1 = self._compute_data_hash(df1_for_hash)
             hash2 = self._compute_data_hash(df2_for_hash)
@@ -834,13 +859,20 @@ class DeduplicationPipeline:
                 match_result = MatchResult(pairs=match_result_df)
             else:
                 match_result = self.matcher.find_cross_matches(
+<<<<<<< HEAD
                     df1_validated, df2_validated,
+=======
+                    df1, df2,
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                     id_column1=id_column1,
                     name_column1=name_column1,
                     id_column2=id_column2, 
                     name_column2=name_column2,
+<<<<<<< HEAD
                     name_columns1=name_columns1,
                     name_columns2=name_columns2,
+=======
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                     additional_columns1=additional_columns1,
                     additional_columns2=additional_columns2
                 )
@@ -848,13 +880,20 @@ class DeduplicationPipeline:
                     self.checkpointer.save(match_result.pairs, 'cross_matching', data_hash)
         else:
             match_result = self.matcher.find_cross_matches(
+<<<<<<< HEAD
                 df1_validated, df2_validated,
+=======
+                df1, df2,
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                 id_column1=id_column1,
                 name_column1=name_column1,
                 id_column2=id_column2, 
                 name_column2=name_column2,
+<<<<<<< HEAD
                 name_columns1=name_columns1,
                 name_columns2=name_columns2,
+=======
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                 additional_columns1=additional_columns1,
                 additional_columns2=additional_columns2
             )
@@ -869,8 +908,13 @@ class DeduplicationPipeline:
             
             # For cross-dataset validation, combine both dataframes for context
             combined_df = pd.concat([
+<<<<<<< HEAD
                 df1_validated.rename(columns={id_column1: 'id', name_column1: 'name'}),
                 df2_validated.rename(columns={id_column2: 'id', name_column2: 'name'})
+=======
+                df1.rename(columns={id_column1: 'id', name_column1: 'name'}),
+                df2.rename(columns={id_column2: 'id', name_column2: 'name'})
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
             ], ignore_index=True)
             
             if self.checkpoint_enabled and resume:
@@ -912,6 +956,7 @@ class DeduplicationPipeline:
             pairs_for_result = match_result.pairs
         
         # Create cross-dataset result
+<<<<<<< HEAD
         result = self._create_cross_dataset_result(df1_validated, df2_validated, pairs_for_result,
                                                 id_column1, name_column1,
                                                 id_column2, name_column2)
@@ -919,6 +964,15 @@ class DeduplicationPipeline:
         print(f"\nCross-dataset matching complete:")
         print(f"  DF1 entities: {len(df1_validated)}")
         print(f"  DF2 entities: {len(df2_validated)}")
+=======
+        result = self._create_cross_dataset_result(df1, df2, pairs_for_result, 
+                                                id_column1, name_column1, 
+                                                id_column2, name_column2)
+        
+        print(f"\nCross-dataset matching complete:")
+        print(f"  DF1 entities: {len(df1)}")
+        print(f"  DF2 entities: {len(df2)}")
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         print(f"  Cross-matches found: {len(pairs_for_result)}")
         
         return result   
@@ -937,13 +991,18 @@ class DeduplicationPipeline:
         # Create entity mapping
         matches = []
         for _, row in validated_pairs.iterrows():
+<<<<<<< HEAD
             match_dict = {
+=======
+            matches.append({
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                 'df1_id': row['id1'],
                 'df1_name': row['name1'],
                 'df2_id': row['id2'], 
                 'df2_name': row['name2'],
                 'similarity_score': row['similarity_score'],
                 'validation_reason': row.get('validation_reason', '')
+<<<<<<< HEAD
             }
             # Add matched column info if available
             if 'matched_column1' in row:
@@ -951,6 +1010,9 @@ class DeduplicationPipeline:
             if 'matched_column2' in row:
                 match_dict['matched_column2'] = row['matched_column2']
             matches.append(match_dict)
+=======
+            })
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         
         matches_df = pd.DataFrame(matches) if matches else pd.DataFrame()
         

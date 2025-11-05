@@ -9,8 +9,11 @@ import pandas as pd
 from tqdm import tqdm
 
 from .core import Validator, ValidationResult, MatchResult
+<<<<<<< HEAD
 from .security import RateLimiter, RateLimitConfig, SecuritySanitizer
 from .exceptions import ValidationError, ModelError, NetworkError, SecurityError
+=======
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
 
 
 class RuleBasedValidator(Validator):
@@ -286,6 +289,7 @@ class LLMValidator(Validator):
         max_retries: int = 3,
         custom_rules: Optional[Dict[str, Any]] = None,
         metadata_columns: Optional[List[str]] = None,
+<<<<<<< HEAD
         checkpoint_every_n_batches: int = 0,
 
         # Security and rate limiting parameters
@@ -294,6 +298,10 @@ class LLMValidator(Validator):
         requests_per_hour: int = 1000,
         enable_input_sanitization: bool = True,
 
+=======
+        checkpoint_every_n_batches: int = 0,  
+        
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         databricks_host: Optional[str] = None,
         databricks_endpoint: Optional[str] = None,
         use_langchain_databricks: bool = False,
@@ -482,8 +490,13 @@ class LLMValidator(Validator):
         
         # Build base rules (generic, always applied)
         base_rules = [
+<<<<<<< HEAD
             "- Carefully determine whether each pair are duplicated.",
            
+=======
+            "- Carefully determine whether each pair represents the same entity or different entities",
+            "- Consider all aspects of the names and any provided context"
+>>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         ]
         
         # Add custom instructions if provided
