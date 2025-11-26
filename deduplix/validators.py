@@ -2,18 +2,13 @@ import os
 import re
 import json
 import time
-from typing import Optional, List, Dict, Any,Callable
+from typing import Optional, List, Dict, Any, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 from tqdm import tqdm
 
 from .core import Validator, ValidationResult, MatchResult
-<<<<<<< HEAD
-from .security import RateLimiter, RateLimitConfig, SecuritySanitizer
-from .exceptions import ValidationError, ModelError, NetworkError, SecurityError
-=======
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
 
 
 class RuleBasedValidator(Validator):
@@ -57,13 +52,13 @@ class RuleBasedValidator(Validator):
         self.metadata_rules = metadata_rules or []
         self.custom_rules = custom_rules or []
     
-    def _check_score(self, row: pd.Series) -> tuple[bool, str]:
+    def _check_score(self, row: pd.Series) -> tuple:
         """Check similarity score threshold"""
         if row['similarity_score'] >= self.min_score:
             return True, ""
         return False, f"Score {row['similarity_score']:.1f} < threshold {self.min_score}"
     
-    def _check_exact_match(self, row: pd.Series, original_df: pd.DataFrame, column: str) -> tuple[bool, str]:
+    def _check_exact_match(self, row: pd.Series, original_df: pd.DataFrame, column: str) -> tuple:
         """Check if column values match exactly"""
         if column not in original_df.columns:
             return True, ""
@@ -82,7 +77,7 @@ class RuleBasedValidator(Validator):
         
         return True, ""
     
-    def _check_fuzzy_match(self, row: pd.Series, original_df: pd.DataFrame, column: str, threshold: float = 80.0) -> tuple[bool, str]:
+    def _check_fuzzy_match(self, row: pd.Series, original_df: pd.DataFrame, column: str, threshold: float = 80.0) -> tuple:
         """Check if column values fuzzy match"""
         if column not in original_df.columns:
             return True, ""
@@ -106,7 +101,7 @@ class RuleBasedValidator(Validator):
         return True, ""
     
     def _check_inequality(self, row: pd.Series, original_df: pd.DataFrame, column: str, 
-                         max_diff_percent: float = None, comparator: str = '<=') -> tuple[bool, str]:
+                         max_diff_percent: float = None, comparator: str = '<=') -> tuple:
         """Check if numeric column values are within threshold"""
         if column not in original_df.columns:
             return True, ""
@@ -126,14 +121,12 @@ class RuleBasedValidator(Validator):
                 val2 = float(val2)
                 
                 if max_diff_percent is not None:
-                    # Check percentage difference
                     max_val = max(val1, val2)
                     if max_val > 0:
                         diff_percent = abs(val1 - val2) / max_val * 100
                         if diff_percent > max_diff_percent:
                             return False, f"{column}: diff {diff_percent:.1f}% > {max_diff_percent}%"
                 else:
-                    # Check absolute comparison
                     diff = abs(val1 - val2)
                     if comparator == '<' and not (diff < max_diff_percent):
                         return False, f"{column}: diff {diff} not < {max_diff_percent}"
@@ -145,7 +138,7 @@ class RuleBasedValidator(Validator):
                         return False, f"{column}: diff {diff} not >= {max_diff_percent}"
                         
             except (ValueError, TypeError):
-                pass  # Non-numeric values, skip
+                pass
         
         return True, ""
     
@@ -166,13 +159,11 @@ class RuleBasedValidator(Validator):
             passed = True
             reasons = []
             
-            # Check similarity score (always)
             score_passed, score_reason = self._check_score(row)
             if not score_passed:
                 passed = False
                 reasons.append(score_reason)
             
-            # Check metadata rules
             if original_df is not None:
                 for rule in self.metadata_rules:
                     column = rule.get('column')
@@ -194,7 +185,6 @@ class RuleBasedValidator(Validator):
                         passed = False
                         reasons.append(reason)
             
-            # Check custom rules
             for custom_rule in self.custom_rules:
                 try:
                     if not custom_rule(row, original_df):
@@ -289,32 +279,13 @@ class LLMValidator(Validator):
         max_retries: int = 3,
         custom_rules: Optional[Dict[str, Any]] = None,
         metadata_columns: Optional[List[str]] = None,
-<<<<<<< HEAD
-        checkpoint_every_n_batches: int = 0,
-
-        # Security and rate limiting parameters
-        enable_rate_limiting: bool = True,
-        requests_per_minute: int = 60,
-        requests_per_hour: int = 1000,
-        enable_input_sanitization: bool = True,
-
-=======
         checkpoint_every_n_batches: int = 0,  
         
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         databricks_host: Optional[str] = None,
         databricks_endpoint: Optional[str] = None,
         use_langchain_databricks: bool = False,
     ):
-        """
-        Parameters
-        ----------
-        ...
-        checkpoint_every_n_batches : int
-            Save checkpoint after every N batches. 0 = no batch checkpointing (default).
-            Example: checkpoint_every_n_batches=5 saves after every 5 batches processed.
-        ...
-        """
+        """Initialize LLM Validator"""
         super().__init__()
         self.api_key = api_key
         self.model = model
@@ -325,40 +296,11 @@ class LLMValidator(Validator):
         self.max_retries = max_retries
         self.custom_rules = custom_rules or {}
         self.metadata_columns = metadata_columns or []
-        self.checkpoint_every_n_batches = checkpoint_every_n_batches  # NEW
+        self.checkpoint_every_n_batches = checkpoint_every_n_batches
 
-        # Databricks extras
         self.databricks_host = databricks_host or os.getenv("DATABRICKS_HOST")
         self.databricks_endpoint = databricks_endpoint
         self.use_langchain_databricks = use_langchain_databricks
-
-        # Initialize security components
-        self.enable_rate_limiting = enable_rate_limiting
-        self.enable_input_sanitization = enable_input_sanitization
-
-        # Set up rate limiter
-        if self.enable_rate_limiting:
-            rate_config = RateLimitConfig(
-                requests_per_minute=requests_per_minute,
-                requests_per_hour=requests_per_hour,
-                burst_limit=10
-            )
-            self.rate_limiter = RateLimiter(rate_config)
-        else:
-            self.rate_limiter = None
-
-        # Set up input sanitizer
-        if self.enable_input_sanitization:
-            self.sanitizer = SecuritySanitizer(strict_mode=True)
-        else:
-            self.sanitizer = None
-
-        # Validate API key format if provided
-        if self.api_key and self.sanitizer:
-            try:
-                self.sanitizer.validate_api_key(self.api_key, min_length=8, max_length=256)
-            except ValueError as e:
-                raise ValueError(f"Invalid API key format: {e}")
 
         self.client = None
         self._client_mode = None
@@ -405,7 +347,6 @@ class LLMValidator(Validator):
 
     def _init_databricks(self):
         """Initialize Databricks client (OpenAI-compatible or LangChain)"""
-        # Prefer OpenAI-compatible Foundation Models API (no extra deps)
         if not self.use_langchain_databricks:
             try:
                 from openai import OpenAI
@@ -424,13 +365,11 @@ class LLMValidator(Validator):
             if not self.databricks_host:
                 raise ValueError("Databricks host missing (databricks_host or DATABRICKS_HOST).")
 
-            # base_url points to /serving-endpoints (OpenAI-compatible)
             base_url = self.databricks_host.rstrip("/") + "/serving-endpoints"
             self.client = OpenAI(api_key=token, base_url=base_url)
             self._client_mode = "databricks_openai"
             return
 
-        # Optional: LangChain ChatDatabricks
         try:
             from langchain_community.chat_models import ChatDatabricks
         except Exception as e:
@@ -460,22 +399,16 @@ class LLMValidator(Validator):
     # ---------- Prompt creation ----------
 
     def _create_prompt(self, batch: pd.DataFrame, original_df: pd.DataFrame = None) -> str:
-        """
-        Create prompt for LLM validation with optional metadata support.
-        Works for both metadata and non-metadata cases.
-        """
+        """Create prompt for LLM validation with optional metadata support"""
         
-        # Build pair descriptions
         pairs_text = []
         for idx, row in batch.iterrows():
             pair_desc = f"Pair {idx}: '{row['name1']}' vs '{row['name2']}' (similarity: {row['similarity_score']:.1f}%)"
             
-            # Add metadata if available
             if original_df is not None and self.metadata_columns:
                 metadata_parts = []
                 for col in self.metadata_columns:
                     if col in original_df.columns:
-                        # Get metadata for both entities
                         df1_match = original_df[original_df['id'] == row['id1']]
                         df2_match = original_df[original_df['id'] == row['id2']]
                         
@@ -488,22 +421,13 @@ class LLMValidator(Validator):
             
             pairs_text.append(pair_desc)
         
-        # Build base rules (generic, always applied)
         base_rules = [
-<<<<<<< HEAD
             "- Carefully determine whether each pair are duplicated.",
-           
-=======
-            "- Carefully determine whether each pair represents the same entity or different entities",
-            "- Consider all aspects of the names and any provided context"
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         ]
         
-        # Add custom instructions if provided
         if 'custom_instructions' in self.custom_rules:
             base_rules.append(f"- {self.custom_rules['custom_instructions']}")
         
-        # Construct final prompt
         prompt = (
             "Analyze these potential duplicate entity pairs. Return ONLY JSON with a top-level key 'decisions', "
             "where each item is {\"pair_index\": <index>, \"is_duplicate\": true|false, \"reason\": \"...\"}.\n\n"
@@ -518,148 +442,63 @@ class LLMValidator(Validator):
 
     def _extract_json(self, text: str) -> Dict[str, Any]:
         """Extract JSON from LLM response with multiple fallback strategies"""
-        # Try fenced block first
         fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
         if fence:
             return json.loads(fence.group(1))
         
-        # Try first JSON object
         obj = re.search(r"\{.*\}", text, re.DOTALL)
         if obj:
             return json.loads(obj.group(0))
         
-        # Try parsing as-is
         return json.loads(text)
 
     # ---------- LLM API calls ----------
 
     def _call_llm(self, prompt: str) -> str:
-        """Make LLM API call based on configured provider with rate limiting and security"""
+        """Make LLM API call based on configured provider"""
+        if self._client_mode == "openai_v1":
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "Identify duplicate entities. Reply with strict JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+            )
+            return resp.choices[0].message.content
 
-        # Apply rate limiting if enabled
-        if self.rate_limiter:
-            try:
-                self.rate_limiter.enforce_request(identifier=self.provider)
-            except Exception as e:
-                # Import here to avoid circular imports
-                from .security import RateLimitError
-                if isinstance(e, RateLimitError):
-                    retry_after = getattr(e, 'retry_after', 60)
-                    print(f"Rate limit exceeded. Waiting {retry_after:.1f} seconds...")
-                    time.sleep(retry_after)
-                    # Retry once after waiting
-                    try:
-                        self.rate_limiter.enforce_request(identifier=self.provider)
-                    except Exception as retry_error:
-                        raise SecurityError(
-                            f"Rate limit exceeded and retry failed: {retry_error}",
-                            security_violation_type='rate_limit',
-                            context={'provider': self.provider, 'retry_after': retry_after}
-                        ) from retry_error
+        if self._client_mode == "databricks_openai":
+            model = self.databricks_endpoint or self.model
+            resp = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "Identify duplicate entities. Reply with strict JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+            )
+            return resp.choices[0].message.content
 
-        # Sanitize prompt if enabled
-        if self.sanitizer:
-            try:
-                prompt = self.sanitizer.sanitize_text(prompt, max_length=50000, allow_html=False)
-            except ValueError as e:
-                raise SecurityError(
-                    f"Prompt sanitization failed: {e}",
-                    security_violation_type='input_sanitization',
-                    context={'prompt_length': len(prompt)}
-                ) from e
-        try:
-            if self._client_mode == "openai_v1":
-                resp = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "Identify duplicate entities. Reply with strict JSON only."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=self.temperature,
-                )
-                return resp.choices[0].message.content
+        if self._client_mode == "databricks_langchain":
+            result = self.client.invoke(prompt)
+            return getattr(result, "content", str(result))
 
-            elif self._client_mode == "databricks_openai":
-                # For Databricks, `model` is the serving endpoint name (or override via databricks_endpoint)
-                model = self.databricks_endpoint or self.model
-                resp = self.client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "Identify duplicate entities. Reply with strict JSON only."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=self.temperature,
-                )
-                return resp.choices[0].message.content
+        if self._client_mode == "anthropic_v1":
+            resp = self.client.messages.create(
+                model=self.model,
+                max_tokens=1000,
+                temperature=self.temperature,
+                system="Identify duplicate entities. Reply with strict JSON only.",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            parts = []
+            for block in getattr(resp, "content", []) or []:
+                text = getattr(block, "text", None)
+                if text:
+                    parts.append(text)
+            return "\n".join(parts).strip()
 
-            elif self._client_mode == "databricks_langchain":
-                # LangChain ChatDatabricks
-                result = self.client.invoke(prompt)
-                # LangChain messages typically have `.content`
-                return getattr(result, "content", str(result))
-
-            elif self._client_mode == "anthropic_v1":
-                # Anthropic Messages API
-                # Claude needs max_tokens; tune as you wish.
-                resp = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=1000,
-                    temperature=self.temperature,
-                    system="Identify duplicate entities. Reply with strict JSON only.",
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                # Response content is a list of content blocks; extract text blocks.
-                parts = []
-                for block in getattr(resp, "content", []) or []:
-                    # block.type can be "text" etc.
-                    text = getattr(block, "text", None)
-                    if text:
-                        parts.append(text)
-                return "\n".join(parts).strip()
-
-            else:
-                raise ModelError(
-                    f"LLM client not initialized correctly: {self._client_mode}",
-                    model_name=self.model,
-                    provider=self.provider
-                )
-
-        except (ConnectionError, TimeoutError) as e:
-            raise NetworkError(
-                f"Network error calling {self.provider} API: {e}",
-                endpoint=f"{self.provider}_api",
-                context={'model': self.model, 'provider': self.provider}
-            ) from e
-
-        except Exception as e:
-            # Check for specific API error patterns
-            error_msg = str(e).lower()
-            if 'api key' in error_msg or 'authentication' in error_msg or 'unauthorized' in error_msg:
-                raise ModelError(
-                    f"Authentication failed for {self.provider}: {e}",
-                    model_name=self.model,
-                    provider=self.provider,
-                    context={'error_type': 'authentication'}
-                ) from e
-            elif 'model' in error_msg and ('not found' in error_msg or 'invalid' in error_msg):
-                raise ModelError(
-                    f"Model not found or invalid for {self.provider}: {e}",
-                    model_name=self.model,
-                    provider=self.provider,
-                    context={'error_type': 'model_not_found'}
-                ) from e
-            elif 'rate limit' in error_msg or 'quota' in error_msg:
-                raise SecurityError(
-                    f"Rate limit or quota exceeded for {self.provider}: {e}",
-                    security_violation_type='rate_limit_api',
-                    context={'model': self.model, 'provider': self.provider}
-                ) from e
-            else:
-                raise NetworkError(
-                    f"API call failed for {self.provider}: {e}",
-                    endpoint=f"{self.provider}_api",
-                    context={'model': self.model, 'provider': self.provider}
-                ) from e
+        raise RuntimeError("LLM client not initialized correctly.")
 
     # ---------- Batch processing ----------
 
@@ -682,14 +521,12 @@ class LLMValidator(Validator):
                 return decisions
             except Exception as e:
                 if attempt < self.max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
+                    time.sleep(2 ** attempt)
                 else:
                     print(f"Batch processing failed after {self.max_retries} attempts: {e}")
-                    # Conservative fallback: keep all pairs
                     return {idx: {"is_duplicate": True, "reason": "LLM validation failed"}
                             for idx in batch.index}
 
- 
     # ---------- Public API ----------
 
     def validate(self, match_result: MatchResult, original_df: pd.DataFrame = None, **kwargs) -> ValidationResult:
@@ -722,25 +559,21 @@ class LLMValidator(Validator):
                 metadata={"message": "No pairs to validate"},
             )
 
-        # Get checkpoint parameters from kwargs
         checkpointer = kwargs.get('checkpointer')
         data_hash = kwargs.get('data_hash')
         resume = kwargs.get('resume', True)
         
-        # Create batches for LLM processing
         batches = [
             pairs_df.iloc[i : i + self.batch_size]
             for i in range(0, len(pairs_df), self.batch_size)
         ]
         
-        # Load existing progress if resuming
         all_decisions: Dict[int, Dict[str, Any]] = {}
         processed_batches = set()
         
         if self.checkpoint_every_n_batches > 0 and checkpointer and data_hash and resume:
             checkpoint_data = checkpointer.load('validation_progress', data_hash)
             if checkpoint_data is not None:
-                # Load previous decisions
                 for _, row in checkpoint_data.iterrows():
                     idx = row['pair_index']
                     all_decisions[idx] = {
@@ -748,7 +581,6 @@ class LLMValidator(Validator):
                         'reason': row.get('reason', '')
                     }
                 
-                # Determine which batches were already processed
                 processed_indices = set(all_decisions.keys())
                 for batch_idx, batch in enumerate(batches):
                     if all(idx in processed_indices for idx in batch.index):
@@ -756,15 +588,12 @@ class LLMValidator(Validator):
                 
                 print(f"  Resuming from checkpoint: {len(processed_batches)}/{len(batches)} batches already processed")
 
-        # Process batches in parallel with checkpointing
         batches_to_process = [(i, batch) for i, batch in enumerate(batches) if i not in processed_batches]
         
         if batches_to_process:
-            from collections import defaultdict
             batch_counter = len(processed_batches)
             
             with ThreadPoolExecutor(max_workers=self.n_workers) as ex:
-                # Submit all unprocessed batches
                 futures = {
                     ex.submit(self._process_batch, batch, original_df): (batch_idx, batch)
                     for batch_idx, batch in batches_to_process
@@ -776,13 +605,11 @@ class LLMValidator(Validator):
                         all_decisions.update(batch_decisions)
                         batch_counter += 1
                         
-                        # Checkpoint every N batches
                         if (self.checkpoint_every_n_batches > 0 and 
                             checkpointer and 
                             data_hash and 
                             batch_counter % self.checkpoint_every_n_batches == 0):
                             
-                            # Save current progress
                             progress_rows = []
                             for idx, decision in all_decisions.items():
                                 progress_rows.append({
@@ -797,7 +624,6 @@ class LLMValidator(Validator):
                     except Exception as e:
                         print(f"Error processing batch: {e}")
 
-        # Collect results
         validated_rows, removed_rows = [], []
         
         for idx, row in pairs_df.iterrows():
@@ -816,7 +642,6 @@ class LLMValidator(Validator):
         validated_df = pd.DataFrame(validated_rows) if validated_rows else pd.DataFrame()
         removed_df = pd.DataFrame(removed_rows) if removed_rows else pd.DataFrame()
 
-        # Prepare metadata
         meta = {
             "model": self.model if self.provider != "databricks" else (self.databricks_endpoint or self.model),
             "provider": self.provider,

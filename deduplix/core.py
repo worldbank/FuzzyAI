@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-=======
-
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 import pandas as pd
@@ -11,18 +7,7 @@ import json
 import hashlib
 from datetime import datetime
 from abc import ABC, abstractmethod
-<<<<<<< HEAD
-import warnings
 from .utils import remove_duplicates_after_deduplication
-from .validation import validate_deduplication_input, validate_cross_dataset_input
-from .exceptions import (
-    DeduplixError, DataValidationError, MatchingError, ValidationError,
-    CheckpointError, ConfigurationError, handle_and_reraise
-)
-from .checkpointing import BaseCheckpointer, FileCheckpointer, DatabaseCheckpointer
-=======
-from .utils import remove_duplicates_after_deduplication
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
 
 @dataclass
 class MatchResult:
@@ -428,8 +413,44 @@ class Validator(ABC):
         pass
 
 
-# Legacy Checkpointer class removed - now using modular checkpointing system
-# See deduplix.checkpointing module for FileCheckpointer and DatabaseCheckpointer
+class Checkpointer:
+    """Handles saving and loading checkpoints"""
+    
+    def __init__(self, checkpoint_dir: str = ".deduplix_checkpoints"):
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.checkpoint_dir.mkdir(exist_ok=True, parents=True)
+    
+    def get_checkpoint_path(self, stage: str, data_hash: str) -> Path:
+        """Generate checkpoint file path"""
+        return self.checkpoint_dir / f"{stage}_{data_hash}.parquet"
+    
+    def save(self, data: pd.DataFrame, stage: str, data_hash: str):
+        """Save checkpoint"""
+        path = self.get_checkpoint_path(stage, data_hash)
+        data.to_parquet(path)
+        
+        # Save metadata
+        meta_path = path.with_suffix('.meta.json')
+        metadata = {
+            'stage': stage,
+            'data_hash': data_hash,
+            'timestamp': datetime.now().isoformat(),
+            'rows': len(data)
+        }
+        with open(meta_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+    
+    def load(self, stage: str, data_hash: str) -> Optional[pd.DataFrame]:
+        """Load checkpoint if exists"""
+        path = self.get_checkpoint_path(stage, data_hash)
+        if path.exists():
+            return pd.read_parquet(path)
+        return None
+    
+    def clear(self):
+        """Clear all checkpoints"""
+        for file in self.checkpoint_dir.glob("*"):
+            file.unlink()
 
 
 class DeduplicationPipeline:
@@ -440,60 +461,12 @@ class DeduplicationPipeline:
         matcher: Matcher,
         validator: Optional[Validator] = None,
         checkpoint: bool = True,
-        checkpoint_type: str = "file",  # "file" or "database"
-        checkpoint_dir: str = ".deduplix_checkpoints",
-        checkpoint_db_path: str = "deduplix_checkpoints.db",
-        checkpoint_compress: bool = True
+        checkpoint_dir: str = ".deduplix_checkpoints"
     ):
-        """
-        Initialize deduplication pipeline
-
-        Parameters
-        ----------
-        matcher : Matcher
-            Entity matching algorithm
-        validator : Optional[Validator]
-            Match validation algorithm
-        checkpoint : bool
-            Whether to enable checkpointing
-        checkpoint_type : str
-            Type of checkpointing: "file" or "database"
-        checkpoint_dir : str
-            Directory for file-based checkpoints
-        checkpoint_db_path : str
-            Database path for database checkpoints
-        checkpoint_compress : bool
-            Whether to compress checkpoint data
-        """
         self.matcher = matcher
         self.validator = validator
         self.checkpoint_enabled = checkpoint
-        self.checkpoint_type = checkpoint_type
-
-        # Initialize appropriate checkpointer
-        if checkpoint:
-            if checkpoint_type == "database":
-                self.checkpointer = DatabaseCheckpointer(
-                    db_path=checkpoint_db_path,
-                    compress=checkpoint_compress
-                )
-            elif checkpoint_type == "file":
-                self.checkpointer = FileCheckpointer(
-                    checkpoint_dir=checkpoint_dir,
-                    compress=checkpoint_compress
-                )
-            else:
-                raise ConfigurationError(
-                    f"Unsupported checkpoint type: {checkpoint_type}",
-                    config_key="checkpoint_type",
-                    config_value=checkpoint_type,
-                    suggestions=[
-                        "Use 'file' for file-based checkpointing",
-                        "Use 'database' for SQLite database checkpointing"
-                    ]
-                )
-        else:
-            self.checkpointer = None
+        self.checkpointer = Checkpointer(checkpoint_dir) if checkpoint else None
     
     def _compute_data_hash(self, df: pd.DataFrame) -> str:
         """
@@ -601,86 +574,31 @@ class DeduplicationPipeline:
             resume: Whether to resume from checkpoint if available
         """
         
-        # Comprehensive input validation
-        print("Stage 0: Validating input data...")
-        try:
-            validated_df, validation_metadata = validate_deduplication_input(
-                df=df,
-                id_column=id_column,
-                name_column=name_column,
-                additional_columns=additional_columns
-            )
-            print(f"  Validated {validation_metadata['final_row_count']} entities "
-                  f"(data quality score: {validation_metadata['data_quality_score']:.2f})")
-
-            if validation_metadata['validation_warnings']:
-                print(f"  Warnings: {'; '.join(validation_metadata['validation_warnings'])}")
-
-        except Exception as e:
-            handle_and_reraise(
-                func_name="DeduplicationPipeline.run.validation",
-                original_exception=e,
-                context={
-                    'input_shape': df.shape,
-                    'id_column': id_column,
-                    'name_column': name_column
-                },
-                suggestions=[
-                    "Check input DataFrame format and column names",
-                    "Ensure ID and name columns exist and contain valid data",
-                    "Review data quality and remove invalid entries"
-                ]
-            )
-
-        # Standardize column names for processing
-        working_df = validated_df.rename(columns={id_column: 'id', name_column: 'name'})
+        # Ensure required columns exist
+        if id_column not in df.columns or name_column not in df.columns:
+            raise ValueError(f"Required columns {id_column} and {name_column} not found")
+        
+        # Standardize column names
+        working_df = df.rename(columns={id_column: 'id', name_column: 'name'})
         
         data_hash = self._compute_data_hash(working_df) if self.checkpoint_enabled else None
         
         # Stage 1: Matching
         print(f"Stage 1: Finding potential matches...")
-
-        try:
-            if self.checkpoint_enabled and resume:
-                try:
-                    match_result_df = self.checkpointer.load('matching', data_hash)
-                    if match_result_df is not None:
-                        print(f"  Loaded {len(match_result_df)} matches from checkpoint")
-                        match_result = MatchResult(pairs=match_result_df)
-                    else:
-                        match_result = self.matcher.find_matches(working_df, additional_columns=additional_columns)
-                        if not match_result.pairs.empty:
-                            self.checkpointer.save(match_result.pairs, 'matching', data_hash)
-                except Exception as e:
-                    raise CheckpointError(
-                        f"Failed to load matching checkpoint: {e}",
-                        checkpoint_stage='matching',
-                        context={'data_hash': data_hash}
-                    ) from e
+        
+        if self.checkpoint_enabled and resume:
+            match_result_df = self.checkpointer.load('matching', data_hash)
+            if match_result_df is not None:
+                print(f"  Loaded {len(match_result_df)} matches from checkpoint")
+                match_result = MatchResult(pairs=match_result_df)
             else:
                 match_result = self.matcher.find_matches(working_df, additional_columns=additional_columns)
-                if self.checkpoint_enabled and not match_result.pairs.empty:
-                    try:
-                        self.checkpointer.save(match_result.pairs, 'matching', data_hash)
-                    except Exception as e:
-                        warnings.warn(f"Failed to save matching checkpoint: {e}", UserWarning)
-
-        except MatchingError:
-            raise  # Re-raise matching errors as-is
-        except Exception as e:
-            handle_and_reraise(
-                func_name="DeduplicationPipeline.run.matching",
-                original_exception=e,
-                context={
-                    'entity_count': len(working_df),
-                    'matcher_type': type(self.matcher).__name__
-                },
-                suggestions=[
-                    "Check matching configuration and parameters",
-                    "Verify entity data format and completeness",
-                    "Consider reducing dataset size for troubleshooting"
-                ]
-            )
+                if not match_result.pairs.empty:
+                    self.checkpointer.save(match_result.pairs, 'matching', data_hash)
+        else:
+            match_result = self.matcher.find_matches(working_df, additional_columns=additional_columns)
+            if self.checkpoint_enabled and not match_result.pairs.empty:
+                self.checkpointer.save(match_result.pairs, 'matching', data_hash)
         
         print(f"  Found {len(match_result.pairs)} potential duplicate pairs")
         
@@ -701,7 +619,6 @@ class DeduplicationPipeline:
                         removed_pairs=pd.DataFrame()
                     )
                 else:
-                    # With checkpoint parameters
                     validation_result = self.validator.validate(
                         match_result,
                         original_df=working_df,
@@ -712,7 +629,6 @@ class DeduplicationPipeline:
                     if not validation_result.validated_pairs.empty:
                         self.checkpointer.save(validation_result.validated_pairs, 'validation', data_hash)
             else:
-                # : with checkpoint parameters
                 validation_result = self.validator.validate(
                     match_result,
                     original_df=working_df,
@@ -751,16 +667,12 @@ class DeduplicationPipeline:
         name_column1: str = 'name',
         id_column2: str = 'id', 
         name_column2: str = 'name',
-<<<<<<< HEAD
         name_columns1: Optional[List[str]] = None,  
         name_columns2: Optional[List[str]] = None,  
-=======
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         additional_columns1: Optional[List[str]] = None,
         additional_columns2: Optional[List[str]] = None,
         resume: bool = True
     ) -> CrossDatasetResult:
-<<<<<<< HEAD
         """
         Run cross-dataset deduplication between two dataframes with checkpoint support.
         
@@ -798,52 +710,19 @@ class DeduplicationPipeline:
         ...     name_columns2=['name', 'trading_name']
         ... )
         """
-=======
-        """Run cross-dataset deduplication between two dataframes with checkpoint support"""
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         
         # Check if matcher supports cross-dataset matching
         if not hasattr(self.matcher, 'find_cross_matches'):
             raise ValueError("Matcher does not support cross-dataset matching")
         
-<<<<<<< HEAD
-        # Comprehensive input validation for cross-dataset matching
-        print("Stage 0: Validating input datasets...")
-        try:
-            df1_validated, df2_validated, cross_validation_metadata = validate_cross_dataset_input(
-                df1=df1, df2=df2,
-                id_column1=id_column1, name_column1=name_column1,
-                id_column2=id_column2, name_column2=name_column2,
-                name_columns1=name_columns1, name_columns2=name_columns2
-            )
-            print(f"  DF1: {cross_validation_metadata['df1_final_rows']} entities "
-                  f"(quality: {cross_validation_metadata['df1_quality_score']:.2f})")
-            print(f"  DF2: {cross_validation_metadata['df2_final_rows']} entities "
-                  f"(quality: {cross_validation_metadata['df2_quality_score']:.2f})")
-
-            if cross_validation_metadata['validation_warnings']:
-                print(f"  Warnings: {'; '.join(cross_validation_metadata['validation_warnings'])}")
-
-        except Exception as e:
-            raise ValueError(f"Cross-dataset validation failed: {e}")
-
-        print(f"Cross-dataset matching: {len(df1_validated)} entities in df1 vs {len(df2_validated)} entities in df2")
-
-=======
         print(f"Cross-dataset matching: {len(df1)} entities in df1 vs {len(df2)} entities in df2")
         
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         # Compute combined data hash for checkpointing
         data_hash = None
         if self.checkpoint_enabled:
             # Standardize column names for hashing
-<<<<<<< HEAD
-            df1_for_hash = df1_validated.rename(columns={id_column1: 'id', name_column1: 'name'})
-            df2_for_hash = df2_validated.rename(columns={id_column2: 'id', name_column2: 'name'})
-=======
             df1_for_hash = df1.rename(columns={id_column1: 'id', name_column1: 'name'})
             df2_for_hash = df2.rename(columns={id_column2: 'id', name_column2: 'name'})
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
             
             hash1 = self._compute_data_hash(df1_for_hash)
             hash2 = self._compute_data_hash(df2_for_hash)
@@ -859,20 +738,13 @@ class DeduplicationPipeline:
                 match_result = MatchResult(pairs=match_result_df)
             else:
                 match_result = self.matcher.find_cross_matches(
-<<<<<<< HEAD
-                    df1_validated, df2_validated,
-=======
                     df1, df2,
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                     id_column1=id_column1,
                     name_column1=name_column1,
                     id_column2=id_column2, 
                     name_column2=name_column2,
-<<<<<<< HEAD
                     name_columns1=name_columns1,
                     name_columns2=name_columns2,
-=======
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                     additional_columns1=additional_columns1,
                     additional_columns2=additional_columns2
                 )
@@ -880,20 +752,13 @@ class DeduplicationPipeline:
                     self.checkpointer.save(match_result.pairs, 'cross_matching', data_hash)
         else:
             match_result = self.matcher.find_cross_matches(
-<<<<<<< HEAD
-                df1_validated, df2_validated,
-=======
                 df1, df2,
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                 id_column1=id_column1,
                 name_column1=name_column1,
                 id_column2=id_column2, 
                 name_column2=name_column2,
-<<<<<<< HEAD
                 name_columns1=name_columns1,
                 name_columns2=name_columns2,
-=======
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                 additional_columns1=additional_columns1,
                 additional_columns2=additional_columns2
             )
@@ -908,13 +773,8 @@ class DeduplicationPipeline:
             
             # For cross-dataset validation, combine both dataframes for context
             combined_df = pd.concat([
-<<<<<<< HEAD
-                df1_validated.rename(columns={id_column1: 'id', name_column1: 'name'}),
-                df2_validated.rename(columns={id_column2: 'id', name_column2: 'name'})
-=======
                 df1.rename(columns={id_column1: 'id', name_column1: 'name'}),
                 df2.rename(columns={id_column2: 'id', name_column2: 'name'})
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
             ], ignore_index=True)
             
             if self.checkpoint_enabled and resume:
@@ -926,7 +786,6 @@ class DeduplicationPipeline:
                         removed_pairs=pd.DataFrame()
                     )
                 else:
-                    # With checkpoint parameters
                     validation_result = self.validator.validate(
                         match_result,
                         original_df=combined_df,
@@ -937,7 +796,6 @@ class DeduplicationPipeline:
                     if not validation_result.validated_pairs.empty:
                         self.checkpointer.save(validation_result.validated_pairs, 'cross_validation', data_hash)
             else:
-                # With  Added checkpoint parameters
                 validation_result = self.validator.validate(
                     match_result,
                     original_df=combined_df,
@@ -956,15 +814,6 @@ class DeduplicationPipeline:
             pairs_for_result = match_result.pairs
         
         # Create cross-dataset result
-<<<<<<< HEAD
-        result = self._create_cross_dataset_result(df1_validated, df2_validated, pairs_for_result,
-                                                id_column1, name_column1,
-                                                id_column2, name_column2)
-
-        print(f"\nCross-dataset matching complete:")
-        print(f"  DF1 entities: {len(df1_validated)}")
-        print(f"  DF2 entities: {len(df2_validated)}")
-=======
         result = self._create_cross_dataset_result(df1, df2, pairs_for_result, 
                                                 id_column1, name_column1, 
                                                 id_column2, name_column2)
@@ -972,7 +821,6 @@ class DeduplicationPipeline:
         print(f"\nCross-dataset matching complete:")
         print(f"  DF1 entities: {len(df1)}")
         print(f"  DF2 entities: {len(df2)}")
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         print(f"  Cross-matches found: {len(pairs_for_result)}")
         
         return result   
@@ -991,18 +839,13 @@ class DeduplicationPipeline:
         # Create entity mapping
         matches = []
         for _, row in validated_pairs.iterrows():
-<<<<<<< HEAD
             match_dict = {
-=======
-            matches.append({
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
                 'df1_id': row['id1'],
                 'df1_name': row['name1'],
                 'df2_id': row['id2'], 
                 'df2_name': row['name2'],
                 'similarity_score': row['similarity_score'],
                 'validation_reason': row.get('validation_reason', '')
-<<<<<<< HEAD
             }
             # Add matched column info if available
             if 'matched_column1' in row:
@@ -1010,9 +853,6 @@ class DeduplicationPipeline:
             if 'matched_column2' in row:
                 match_dict['matched_column2'] = row['matched_column2']
             matches.append(match_dict)
-=======
-            })
->>>>>>> c032314305f8e2afa96c70afb0030f76ad8c3a64
         
         matches_df = pd.DataFrame(matches) if matches else pd.DataFrame()
         
