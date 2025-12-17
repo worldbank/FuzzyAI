@@ -7,19 +7,23 @@ import json
 import hashlib
 from datetime import datetime
 from abc import ABC, abstractmethod
-from .utils import remove_duplicates_after_deduplication
+try:
+    from .utils import remove_duplicates_after_deduplication
+except ImportError:
+    def remove_duplicates_after_deduplication(original_df, dedup_result, id_column='id', keep_strategy='first'):
+        return original_df
 
 @dataclass
 class MatchResult:
     """Result from matching stage"""
-    pairs: pd.DataFrame  # columns: [id1, id2, name1, name2, similarity_score]
+    pairs: pd.DataFrame
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class ValidationResult:
     """Result from validation stage"""
-    validated_pairs: pd.DataFrame  # same structure as MatchResult.pairs + validation_reason
+    validated_pairs: pd.DataFrame
     removed_pairs: pd.DataFrame
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -27,8 +31,8 @@ class ValidationResult:
 @dataclass
 class DeduplicationResult:
     """Final deduplication result"""
-    entity_groups: pd.DataFrame  # columns: [entity_id, entity_name, group_id]
-    duplicate_pairs: pd.DataFrame  # validated pairs used for grouping
+    entity_groups: pd.DataFrame
+    duplicate_pairs: pd.DataFrame
     statistics: Dict[str, Any]
     
     def get_group(self, entity_id) -> List:
@@ -80,18 +84,15 @@ class DeduplicationResult:
         entity_groups = self.entity_groups.copy()
         entities_to_keep = []
         
-        # Keep singletons (group_id = 0)
         singletons = entity_groups[entity_groups['group_id'] == 0]['entity_id'].tolist()
         entities_to_keep.extend(singletons)
         
-        # Process duplicate groups
         duplicate_groups = entity_groups[entity_groups['group_id'] > 0].groupby('group_id')
         
         for group_id, group_df in duplicate_groups:
             group_entities = group_df['entity_id'].tolist()
             
             if keep_strategy == 'first':
-                # Keep entity that appears first in original dataframe
                 original_indices = []
                 for entity_id in group_entities:
                     idx = original_df[original_df[id_column] == entity_id].index
@@ -103,7 +104,6 @@ class DeduplicationResult:
                     entities_to_keep.append(original_indices[0][0])
                     
             elif keep_strategy == 'last':
-                # Keep entity that appears last in original dataframe
                 original_indices = []
                 for entity_id in group_entities:
                     idx = original_df[original_df[id_column] == entity_id].index
@@ -115,7 +115,6 @@ class DeduplicationResult:
                     entities_to_keep.append(original_indices[-1][0])
                     
             elif keep_strategy == 'highest_score':
-                # Keep entity with highest average similarity score
                 if not self.duplicate_pairs.empty:
                     entity_scores = {}
                     for entity_id in group_entities:
@@ -136,10 +135,8 @@ class DeduplicationResult:
                 else:
                     entities_to_keep.append(group_entities[0])
             else:
-                # Default to first entity in group
                 entities_to_keep.append(group_entities[0])
         
-        # Filter original dataframe
         cleaned_df = original_df[original_df[id_column].isin(entities_to_keep)].copy()
         return cleaned_df
 
@@ -147,11 +144,9 @@ class DeduplicationResult:
         """Get list of entity IDs to keep (one from each duplicate group + singletons)"""
         entities_to_keep = []
         
-        # Keep singletons (group_id = 0)
         singletons = self.entity_groups[self.entity_groups['group_id'] == 0]['entity_id'].tolist()
         entities_to_keep.extend(singletons)
         
-        # One entity from each duplicate group
         duplicate_groups = self.entity_groups[self.entity_groups['group_id'] > 0].groupby('group_id')
         
         for group_id, group_df in duplicate_groups:
@@ -191,7 +186,7 @@ class DeduplicationResult:
 @dataclass
 class CrossDatasetResult:
     """Result from cross-dataset matching"""
-    cross_matches: pd.DataFrame  # columns: [df1_id, df1_name, df2_id, df2_name, similarity_score]
+    cross_matches: pd.DataFrame
     df1_metadata: Dict[str, Any]
     df2_metadata: Dict[str, Any] 
     statistics: Dict[str, Any]
@@ -219,18 +214,13 @@ class CrossDatasetResult:
         if self.cross_matches.empty:
             return pd.DataFrame()
             
-        # Prepare merge keys
         id_col1 = self.df1_metadata['id_col']
         id_col2 = self.df2_metadata['id_col'] 
         
-        # Create merge dataframe
         merge_keys = self.cross_matches[['df1_id', 'df2_id', 'similarity_score']].copy()
         merge_keys = merge_keys.rename(columns={'df1_id': id_col1, 'df2_id': id_col2})
         
-        # Merge df1
         result = merge_keys.merge(df1, on=id_col1, how=how, suffixes=('', suffix1))
-        
-        # Merge df2
         result = result.merge(df2, on=id_col2, how=how, suffixes=(suffix1, suffix2))
         
         return result
@@ -265,51 +255,17 @@ class CrossDatasetResult:
             df2_metadata=data['df2_metadata'],
             statistics=data['statistics']
         )
+    
     def consolidate_with_config(
         self,
         df1: pd.DataFrame,
         df2: pd.DataFrame,
-        config,  # ConsolidationConfig
+        config,
         id_column1: Optional[str] = None,
         id_column2: Optional[str] = None,
         name_column2: Optional[str] = None
     ) -> pd.DataFrame:
-        """
-        Consolidate matches using ConsolidationConfig.
-        
-        For each entity in df1, this selects ONE main match from df2 based on
-        priority rules, and lists all other match IDs in 'other_candidates' column.
-        
-        Parameters
-        ----------
-        df1 : pd.DataFrame
-            First dataset
-        df2 : pd.DataFrame
-            Second dataset
-        config : ConsolidationConfig
-            Consolidation configuration (from consolidation.py)
-        id_column1 : str, optional
-            ID column in df1 (uses metadata if None)
-        id_column2 : str, optional
-            ID column in df2 (uses metadata if None)
-        name_column2 : str, optional
-            Name column in df2 (uses metadata if None)
-            
-        Returns
-        -------
-        pd.DataFrame
-            Consolidated dataframe with columns:
-            - All original df1 columns
-            - main_{id_column2}: Selected match ID
-            - main_{name_column2}: Selected match name
-            - main_similarity_score: Match quality
-            - main_{priority_column}: Priority source (if configured)
-            - other_candidates: Comma-separated other match IDs
-            - total_matches: Number of matches found
-            - all_match_ids: All match IDs (if keep_all_matches=True)
-            
-     
-        """
+        """Consolidate matches using ConsolidationConfig"""
         from .consolidation import ConsolidationEngine
         
         id_col1 = id_column1 or self.df1_metadata['id_col']
@@ -325,11 +281,12 @@ class CrossDatasetResult:
             id_col2,
             name_col2
         )
+    
     def consolidate_with_llm(
         self,
         df1: pd.DataFrame,
         df2: pd.DataFrame,
-        config,  # LLMConsolidationConfig
+        config,
         id_column1: Optional[str] = None,
         id_column2: Optional[str] = None,
         name_column2: Optional[str] = None,
@@ -337,48 +294,7 @@ class CrossDatasetResult:
         data_hash: Optional[str] = None,
         resume: bool = True
     ) -> pd.DataFrame:
-        """
-        Consolidate matches using LLM-based intelligent selection.
-        
-        Uses an LLM to select the best match for each entity when multiple
-        candidates exist. The LLM considers metadata, similarity scores,
-        and custom instructions to make informed decisions.
-        
-        Parameters
-        ----------
-        df1 : pd.DataFrame
-            First dataset
-        df2 : pd.DataFrame
-            Second dataset
-        config : LLMConsolidationConfig
-            LLM consolidation configuration (from llm_consolidation.py)
-        id_column1 : str, optional
-            ID column in df1 (uses metadata if None)
-        id_column2 : str, optional
-            ID column in df2 (uses metadata if None)
-        name_column2 : str, optional
-            Name column in df2 (uses metadata if None)
-        checkpointer : Checkpointer, optional
-            Checkpointer instance for saving progress
-        data_hash : str, optional
-            Hash for checkpoint files
-        resume : bool
-            Whether to resume from checkpoint (default: True)
-            
-        Returns
-        -------
-        pd.DataFrame
-            Consolidated dataframe with columns:
-            - All original df1 columns
-            - main_{id_column2}: LLM-selected match ID
-            - main_{name_column2}: LLM-selected match name
-            - main_similarity_score: Match quality
-            - llm_reasoning: LLM's explanation for selection
-            - other_candidates: Comma-separated other match IDs
-            - total_matches: Number of matches found
-            
-       
-        """
+        """Consolidate matches using LLM-based intelligent selection"""
         from .llm_consolidation import LLMConsolidationEngine
         
         id_col1 = id_column1 or self.df1_metadata['id_col']
@@ -397,6 +313,8 @@ class CrossDatasetResult:
             data_hash=data_hash,
             resume=resume
         )
+
+
 class Matcher(ABC):
     """Abstract base class for matchers"""
     
@@ -429,7 +347,6 @@ class Checkpointer:
         path = self.get_checkpoint_path(stage, data_hash)
         data.to_parquet(path)
         
-        # Save metadata
         meta_path = path.with_suffix('.meta.json')
         metadata = {
             'stage': stage,
@@ -469,18 +386,9 @@ class DeduplicationPipeline:
         self.checkpointer = Checkpointer(checkpoint_dir) if checkpoint else None
     
     def _compute_data_hash(self, df: pd.DataFrame) -> str:
-        """
-        Compute collision-resistant hash of dataframe for checkpoint identification.
-        
-        Uses shape + hash of all entity IDs to ensure different datasets get
-        different hashes, even if they have the same number of rows.
-        """
-        # Hash all IDs - this makes the hash unique to the specific entities
+        """Compute collision-resistant hash of dataframe for checkpoint identification"""
         id_hash = pd.util.hash_pandas_object(df['id'], index=False).sum()
-        
-    
         hash_str = f"{df.shape[0]}_{df.shape[1]}_{id_hash}"
-        
         return hashlib.md5(hash_str.encode()).hexdigest()[:16]
     
     def _remove_symmetric_pairs(self, pairs_df: pd.DataFrame) -> pd.DataFrame:
@@ -489,15 +397,9 @@ class DeduplicationPipeline:
             return pairs_df
             
         df = pairs_df.copy()
-        
-        # Create canonical form where smaller ID is always first
         df['canonical_id1'] = df[['id1', 'id2']].min(axis=1)
         df['canonical_id2'] = df[['id1', 'id2']].max(axis=1)
-        
-        # Remove duplicates based on canonical form
         df = df.drop_duplicates(subset=['canonical_id1', 'canonical_id2'])
-        
-        # Clean up temporary columns
         df = df.drop(columns=['canonical_id1', 'canonical_id2'])
         
         return df
@@ -505,30 +407,25 @@ class DeduplicationPipeline:
     def _cluster_entities(self, validated_pairs: pd.DataFrame, all_entities: pd.DataFrame) -> DeduplicationResult:
         """Create groups using connected components"""
         
-        # Build graph from validated pairs
         G = nx.Graph()
         
         if not validated_pairs.empty:
             for _, row in validated_pairs.iterrows():
                 G.add_edge(row['id1'], row['id2'], weight=row.get('similarity_score', 1.0))
         
-        # Find connected components
         components = list(nx.connected_components(G))
         
-        # Create entity to group mapping
         entity_to_group = {}
         for group_id, component in enumerate(components, start=1):
             for entity_id in component:
                 entity_to_group[entity_id] = group_id
         
-        # Build result dataframe including entities with no duplicates
         result_rows = []
         
-        # Add all entities, assigning group 0 to singletons
         for _, row in all_entities.iterrows():
             entity_id = row['id']
             entity_name = row['name']
-            group_id = entity_to_group.get(entity_id, 0)  # 0 for no duplicates
+            group_id = entity_to_group.get(entity_id, 0)
             
             result_rows.append({
                 'entity_id': entity_id,
@@ -538,7 +435,6 @@ class DeduplicationPipeline:
         
         entity_groups = pd.DataFrame(result_rows)
         
-        # Calculate statistics
         statistics = {
             'total_entities': len(all_entities),
             'duplicate_pairs': len(validated_pairs),
@@ -563,27 +459,14 @@ class DeduplicationPipeline:
         additional_columns: Optional[List[str]] = None,
         resume: bool = True
     ) -> DeduplicationResult:
-        """
-        Run the complete deduplication pipeline
+        """Run the complete deduplication pipeline"""
         
-        Args:
-            df: Input dataframe with entities
-            id_column: Column name for entity ID
-            name_column: Column name for entity name/description
-            additional_columns: Additional columns to consider in matching
-            resume: Whether to resume from checkpoint if available
-        """
-        
-        # Ensure required columns exist
         if id_column not in df.columns or name_column not in df.columns:
             raise ValueError(f"Required columns {id_column} and {name_column} not found")
         
-        # Standardize column names
         working_df = df.rename(columns={id_column: 'id', name_column: 'name'})
-        
         data_hash = self._compute_data_hash(working_df) if self.checkpoint_enabled else None
         
-        # Stage 1: Matching
         print(f"Stage 1: Finding potential matches...")
         
         if self.checkpoint_enabled and resume:
@@ -602,11 +485,9 @@ class DeduplicationPipeline:
         
         print(f"  Found {len(match_result.pairs)} potential duplicate pairs")
         
-        # Remove symmetric pairs
         match_result.pairs = self._remove_symmetric_pairs(match_result.pairs)
         print(f"  After removing symmetric pairs: {len(match_result.pairs)} pairs")
         
-        # Stage 2: Validation (optional)
         if self.validator:
             print(f"Stage 2: Validating matches...")
             
@@ -646,7 +527,6 @@ class DeduplicationPipeline:
         else:
             pairs_for_clustering = match_result.pairs
         
-        # Stage 3: Clustering
         print(f"Stage 3: Clustering entities into groups...")
         result = self._cluster_entities(pairs_for_clustering, working_df)
         
@@ -711,16 +591,13 @@ class DeduplicationPipeline:
         ... )
         """
         
-        # Check if matcher supports cross-dataset matching
         if not hasattr(self.matcher, 'find_cross_matches'):
             raise ValueError("Matcher does not support cross-dataset matching")
         
         print(f"Cross-dataset matching: {len(df1)} entities in df1 vs {len(df2)} entities in df2")
         
-        # Compute combined data hash for checkpointing
         data_hash = None
         if self.checkpoint_enabled:
-            # Standardize column names for hashing
             df1_for_hash = df1.rename(columns={id_column1: 'id', name_column1: 'name'})
             df2_for_hash = df2.rename(columns={id_column2: 'id', name_column2: 'name'})
             
@@ -728,7 +605,6 @@ class DeduplicationPipeline:
             hash2 = self._compute_data_hash(df2_for_hash)
             data_hash = f"{hash1}_{hash2}"
         
-        # Stage 1: Cross-dataset matching
         print(f"Stage 1: Finding cross-dataset matches...")
         
         if self.checkpoint_enabled and resume:
@@ -767,11 +643,9 @@ class DeduplicationPipeline:
         
         print(f"  Found {len(match_result.pairs)} cross-dataset matches")
         
-        # Stage 2: Validation (optional)
         if self.validator:
             print(f"Stage 2: Validating cross-dataset matches...")
             
-            # For cross-dataset validation, combine both dataframes for context
             combined_df = pd.concat([
                 df1.rename(columns={id_column1: 'id', name_column1: 'name'}),
                 df2.rename(columns={id_column2: 'id', name_column2: 'name'})
@@ -813,7 +687,6 @@ class DeduplicationPipeline:
         else:
             pairs_for_result = match_result.pairs
         
-        # Create cross-dataset result
         result = self._create_cross_dataset_result(df1, df2, pairs_for_result, 
                                                 id_column1, name_column1, 
                                                 id_column2, name_column2)
@@ -824,6 +697,7 @@ class DeduplicationPipeline:
         print(f"  Cross-matches found: {len(pairs_for_result)}")
         
         return result   
+    
     def _create_cross_dataset_result(
         self, 
         df1: pd.DataFrame, 
@@ -836,7 +710,6 @@ class DeduplicationPipeline:
     ) -> CrossDatasetResult:
         """Create cross-dataset matching result"""
         
-        # Create entity mapping
         matches = []
         for _, row in validated_pairs.iterrows():
             match_dict = {
@@ -847,7 +720,6 @@ class DeduplicationPipeline:
                 'similarity_score': row['similarity_score'],
                 'validation_reason': row.get('validation_reason', '')
             }
-            # Add matched column info if available
             if 'matched_column1' in row:
                 match_dict['matched_column1'] = row['matched_column1']
             if 'matched_column2' in row:
@@ -856,7 +728,6 @@ class DeduplicationPipeline:
         
         matches_df = pd.DataFrame(matches) if matches else pd.DataFrame()
         
-        # Statistics
         df1_with_matches = set(validated_pairs['id1'].tolist()) if not validated_pairs.empty else set()
         df2_with_matches = set(validated_pairs['id2'].tolist()) if not validated_pairs.empty else set()
         
