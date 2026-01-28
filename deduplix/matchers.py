@@ -1,4 +1,5 @@
-from typing import List, Optional, Dict, Any
+
+from typing import List, Optional, Dict, Any, Tuple
 import pandas as pd
 import numpy as np
 import re
@@ -10,13 +11,37 @@ from .core import Matcher, MatchResult
 
 
 class FuzzyMatcher(Matcher):
-    """Fuzzy string matching using RapidFuzz with preprocessing support"""
+    """
+    Fuzzy string matching using RapidFuzz with preprocessing support.
+    
+    Parameters
+    ----------
+    threshold : float, default=80.0
+        Minimum similarity score (0-100) for matches
+    scorer : str, default='ratio'
+        Scoring algorithm: 'ratio', 'partial_ratio', 'token_sort_ratio',
+        'token_set_ratio', or 'WRatio'
+    max_matches_per_entity : int or None, default=None
+        Maximum matches per entity. None for unlimited matches
+    n_workers : int or None, default=None
+        Number of parallel workers. None uses min(cpu_count-1, 4)
+    use_multiprocessing : bool, default=False
+        Whether to use multiprocessing (disabled on Windows)
+    lowercase : bool, default=True
+        Convert text to lowercase during preprocessing
+    strip_whitespace : bool, default=True
+        Remove extra whitespace during preprocessing
+    remove_punctuation : bool, default=False
+        Remove punctuation during preprocessing
+    punctuation_pattern : str, default=r'[^\w\s]'
+        Regex pattern for punctuation removal
+    """
     
     def __init__(
         self,
         threshold: float = 80.0,
         scorer: str = 'ratio',
-        max_matches_per_entity: int = 100,
+        max_matches_per_entity: Optional[int] = None,
         n_workers: Optional[int] = None,
         use_multiprocessing: bool = False,
         lowercase: bool = True,
@@ -39,7 +64,19 @@ class FuzzyMatcher(Matcher):
         self.use_multiprocessing = use_multiprocessing and platform.system() != 'Windows'
     
     def _get_scorer(self, scorer_name: str):
-        """Get scorer function from name"""
+        """
+        Get scorer function from name.
+        
+        Parameters
+        ----------
+        scorer_name : str
+            Name of the scoring algorithm
+            
+        Returns
+        -------
+        callable
+            RapidFuzz scorer function
+        """
         scorers = {
             'ratio': fuzz.ratio,
             'partial_ratio': fuzz.partial_ratio,
@@ -50,6 +87,19 @@ class FuzzyMatcher(Matcher):
         return scorers.get(scorer_name, fuzz.ratio)
     
     def preprocess_text(self, text: str) -> str:
+        """
+        Preprocess text according to configured settings.
+        
+        Parameters
+        ----------
+        text : str
+            Input text to preprocess
+            
+        Returns
+        -------
+        str
+            Preprocessed text
+        """
         if pd.isna(text):
             return ""
         
@@ -69,28 +119,56 @@ class FuzzyMatcher(Matcher):
         
         return processed
     
-    def _prepare_dataframe(self, df: pd.DataFrame) -> tuple:
+    def _prepare_dataframe(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict, Dict]:
+        """
+        Prepare dataframe with vectorized preprocessing.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input dataframe with 'id' and 'name' columns
+            
+        Returns
+        -------
+        tuple
+            (df_prep, prep_to_ids, prep_to_original) where:
+            - df_prep: DataFrame with 'name_preprocessed' column added
+            - prep_to_ids: Dict mapping preprocessed names to list of IDs
+            - prep_to_original: Dict mapping preprocessed names to original names
+        """
         df_prep = df.copy()
         df_prep['name_preprocessed'] = df_prep['name'].apply(self.preprocess_text)
         
-        prep_to_ids = {}
-        prep_to_original = {}
+        valid_mask = df_prep['name_preprocessed'].astype(bool)
+        df_valid = df_prep[valid_mask]
         
-        for _, row in df_prep.iterrows():
-            prep_name = row['name_preprocessed']
-            if prep_name:
-                if prep_name not in prep_to_ids:
-                    prep_to_ids[prep_name] = []
-                    prep_to_original[prep_name] = row['name']
-                prep_to_ids[prep_name].append(row['id'])
+        grouped = df_valid.groupby('name_preprocessed', sort=False)
+        
+        prep_to_ids = grouped['id'].apply(list).to_dict()
+        prep_to_original = grouped['name'].first().to_dict()
         
         return df_prep, prep_to_ids, prep_to_original
     
-    def _process_batch(self, args):
+    def _process_batch(self, args: Tuple) -> List[Dict]:
+        """
+        Process a batch of entities for matching.
+        
+        Parameters
+        ----------
+        args : tuple
+            (batch_df, all_preprocessed_names, prep_to_ids, prep_to_original)
+            
+        Returns
+        -------
+        list of dict
+            Match results with keys: id1, id2, name1, name2, similarity_score
+        """
         batch_df, all_preprocessed_names, prep_to_ids, prep_to_original = args
         results = []
         
-        for _, row in batch_df.iterrows():
+        batch_records = batch_df.to_dict('records')
+        
+        for row in batch_records:
             entity_id = row['id']
             entity_name_original = row['name']
             entity_name_preprocessed = row['name_preprocessed']
@@ -102,35 +180,77 @@ class FuzzyMatcher(Matcher):
                 entity_name_preprocessed,
                 all_preprocessed_names,
                 scorer=self.scorer,
-                limit=None
+                score_cutoff=self.threshold
             )
             
             match_count = 0
             for match_name_prep, score, _ in matches:
-                if score >= self.threshold:
-                    match_ids = prep_to_ids.get(match_name_prep, [])
-                    match_name_original = prep_to_original.get(match_name_prep, match_name_prep)
-                    
-                    for match_id in match_ids:
-                        if match_id != entity_id:
-                            results.append({
-                                'id1': entity_id,
-                                'id2': match_id,
-                                'name1': entity_name_original,
-                                'name2': match_name_original,
-                                'similarity_score': score
-                            })
-                            match_count += 1
-                            
-                            if match_count >= self.max_matches:
-                                break
-                    
-                    if match_count >= self.max_matches:
-                        break
+                match_ids = prep_to_ids.get(match_name_prep, [])
+                match_name_original = prep_to_original.get(match_name_prep, match_name_prep)
+                
+                for match_id in match_ids:
+                    if match_id != entity_id:
+                        results.append({
+                            'id1': entity_id,
+                            'id2': match_id,
+                            'name1': entity_name_original,
+                            'name2': match_name_original,
+                            'similarity_score': score
+                        })
+                        match_count += 1
+                        
+                        if self.max_matches is not None and match_count >= self.max_matches:
+                            break
+                
+                if self.max_matches is not None and match_count >= self.max_matches:
+                    break
         
         return results
     
+    def _remove_symmetric_pairs(self, pairs_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Remove symmetric duplicate pairs using set-based O(n) approach.
+        
+        Parameters
+        ----------
+        pairs_df : pd.DataFrame
+            DataFrame with id1 and id2 columns
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with symmetric pairs removed
+        """
+        if pairs_df.empty:
+            return pairs_df
+        
+        seen = set()
+        keep_indices = []
+        
+        for idx, (id1, id2) in enumerate(zip(pairs_df['id1'], pairs_df['id2'])):
+            key = (min(id1, id2), max(id1, id2)) if id1 < id2 else (id2, id1)
+            if key not in seen:
+                seen.add(key)
+                keep_indices.append(idx)
+        
+        return pairs_df.iloc[keep_indices]
+    
     def find_matches(self, df: pd.DataFrame, **kwargs) -> MatchResult:
+        """
+        Find fuzzy matches within a single dataset.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame with 'id' and 'name' columns
+        **kwargs
+            Additional keyword arguments (unused)
+            
+        Returns
+        -------
+        MatchResult
+            Object containing matched pairs and metadata
+        """
         df_clean = df.dropna(subset=['name']).copy()
         
         if df_clean.empty:
@@ -163,10 +283,7 @@ class FuzzyMatcher(Matcher):
         
         if all_results:
             pairs_df = pd.DataFrame(all_results)
-            pairs_df['min_id'] = pairs_df[['id1', 'id2']].min(axis=1)
-            pairs_df['max_id'] = pairs_df[['id1', 'id2']].max(axis=1)
-            pairs_df = pairs_df.drop_duplicates(subset=['min_id', 'max_id'])
-            pairs_df = pairs_df.drop(columns=['min_id', 'max_id'])
+            pairs_df = self._remove_symmetric_pairs(pairs_df)
             pairs_df = pairs_df.sort_values('similarity_score', ascending=False)
         else:
             pairs_df = pd.DataFrame(columns=['id1', 'id2', 'name1', 'name2', 'similarity_score'])
@@ -185,11 +302,27 @@ class FuzzyMatcher(Matcher):
         
         return MatchResult(pairs=pairs_df, metadata=metadata)
     
-    def _process_cross_batch(self, args):
+    def _process_cross_batch(self, args: Tuple) -> List[Dict]:
+        """
+        Process a batch of entities for cross-dataset matching.
+        
+        Parameters
+        ----------
+        args : tuple
+            (batch_df, df2_preprocessed_names, prep_to_ids2, prep_to_original2)
+            
+        Returns
+        -------
+        list of dict
+            Match results with keys: id1, id2, name1, name2, similarity_score,
+            source1, source2
+        """
         batch_df, df2_preprocessed_names, prep_to_ids2, prep_to_original2 = args
         results = []
         
-        for _, row in batch_df.iterrows():
+        batch_records = batch_df.to_dict('records')
+        
+        for row in batch_records:
             entity_id1 = row['id']
             entity_name1_original = row['name']
             entity_name1_preprocessed = row['name_preprocessed']
@@ -201,32 +334,31 @@ class FuzzyMatcher(Matcher):
                 entity_name1_preprocessed,
                 df2_preprocessed_names,
                 scorer=self.scorer,
-                limit=None
+                score_cutoff=self.threshold
             )
             
             match_count = 0
             for match_name_prep, score, _ in matches:
-                if score >= self.threshold:
-                    match_ids2 = prep_to_ids2.get(match_name_prep, [])
-                    match_name2_original = prep_to_original2.get(match_name_prep, match_name_prep)
+                match_ids2 = prep_to_ids2.get(match_name_prep, [])
+                match_name2_original = prep_to_original2.get(match_name_prep, match_name_prep)
+                
+                for match_id2 in match_ids2:
+                    results.append({
+                        'id1': entity_id1,
+                        'id2': match_id2,
+                        'name1': entity_name1_original,
+                        'name2': match_name2_original,
+                        'similarity_score': score,
+                        'source1': 'df1',
+                        'source2': 'df2'
+                    })
+                    match_count += 1
                     
-                    for match_id2 in match_ids2:
-                        results.append({
-                            'id1': entity_id1,
-                            'id2': match_id2,
-                            'name1': entity_name1_original,
-                            'name2': match_name2_original,
-                            'similarity_score': score,
-                            'source1': 'df1',
-                            'source2': 'df2'
-                        })
-                        match_count += 1
-                        
-                        if match_count >= self.max_matches:
-                            break
-                    
-                    if match_count >= self.max_matches:
+                    if self.max_matches is not None and match_count >= self.max_matches:
                         break
+                
+                if self.max_matches is not None and match_count >= self.max_matches:
+                    break
         
         return results
     
@@ -240,41 +372,71 @@ class FuzzyMatcher(Matcher):
         name_columns2: List[str]
     ) -> MatchResult:
         """
-        Internal method to handle matching across multiple column combinations.
-        For each entity pair, keeps the best match across all column combinations.
-        """
+        Find cross-dataset matches using multiple name column combinations.
         
+        Caches df1 and df2 preparations to avoid redundant preprocessing when
+        trying multiple column combinations.
+        
+        Parameters
+        ----------
+        df1 : pd.DataFrame
+            First dataset
+        df2 : pd.DataFrame
+            Second dataset
+        id_column1 : str
+            ID column name in df1
+        id_column2 : str
+            ID column name in df2
+        name_columns1 : list of str
+            Name columns to try in df1
+        name_columns2 : list of str
+            Name columns to try in df2
+            
+        Returns
+        -------
+        MatchResult
+            Best matches across all column combinations
+        """
         all_matches = []
         total_combinations = len(name_columns1) * len(name_columns2)
         
         print(f"  Trying {total_combinations} column combinations...")
         
-        # Try each combination of name columns
+        df1_cache = {}
         for col1 in name_columns1:
+            if col1 not in df1.columns:
+                print(f"  Warning: Column '{col1}' not found in df1, skipping")
+                continue
+            df1_subset = df1[[id_column1, col1]].dropna().copy()
+            if df1_subset.empty:
+                continue
+            df1_subset = df1_subset.rename(columns={id_column1: 'id', col1: 'name'})
+            df1_cache[col1] = self._prepare_dataframe(df1_subset)
+        
+        df2_cache = {}
+        for col2 in name_columns2:
+            if col2 not in df2.columns:
+                print(f"  Warning: Column '{col2}' not found in df2, skipping")
+                continue
+            df2_subset = df2[[id_column2, col2]].dropna().copy()
+            if df2_subset.empty:
+                continue
+            df2_subset = df2_subset.rename(columns={id_column2: 'id', col2: 'name'})
+            df2_cache[col2] = self._prepare_dataframe(df2_subset)
+        
+        for col1 in name_columns1:
+            if col1 not in df1_cache:
+                continue
+                
+            df1_prep, prep_to_ids1, prep_to_original1 = df1_cache[col1]
+            
             for col2 in name_columns2:
-                if col1 not in df1.columns:
-                    print(f"  Warning: Column '{col1}' not found in df1, skipping")
-                    continue
-                if col2 not in df2.columns:
-                    print(f"  Warning: Column '{col2}' not found in df2, skipping")
+                if col2 not in df2_cache:
                     continue
                 
-                # Prepare data for this column combination
-                df1_subset = df1[[id_column1, col1]].dropna().copy()
-                df2_subset = df2[[id_column2, col2]].dropna().copy()
-                
-                if df1_subset.empty or df2_subset.empty:
-                    continue
-                
-                df1_subset = df1_subset.rename(columns={id_column1: 'id', col1: 'name'})
-                df2_subset = df2_subset.rename(columns={id_column2: 'id', col2: 'name'})
-                
-                # Match on this combination
-                df1_prep, prep_to_ids1, prep_to_original1 = self._prepare_dataframe(df1_subset)
-                df2_prep, prep_to_ids2, prep_to_original2 = self._prepare_dataframe(df2_subset)
+                df2_prep, prep_to_ids2, prep_to_original2 = df2_cache[col2]
                 df2_preprocessed_names = list(prep_to_ids2.keys())
                 
-                # Process batches for this combination
                 batch_size = max(1, len(df1_prep) // (self.n_workers * 4))
                 batches = []
                 
@@ -288,7 +450,6 @@ class FuzzyMatcher(Matcher):
                     for future in as_completed(futures):
                         try:
                             batch_results = future.result()
-                            # Add column info to each match
                             for match in batch_results:
                                 match['matched_column1'] = col1
                                 match['matched_column2'] = col2
@@ -305,17 +466,15 @@ class FuzzyMatcher(Matcher):
                 metadata={'message': 'No matches found across any column combinations'}
             )
         
-        # Convert to DataFrame
         matches_df = pd.DataFrame(all_matches)
         
-        # For each entity pair, keep only the best match across all column combinations
-        # Convert IDs to strings to handle mixed types (int and str)
-        matches_df['pair_key'] = matches_df.apply(
-            lambda row: tuple(sorted([str(row['id1']), str(row['id2'])])), 
-            axis=1
-        )
+        id1_str = matches_df['id1'].astype(str).values
+        id2_str = matches_df['id2'].astype(str).values
+        matches_df['pair_key'] = [
+            (a, b) if a <= b else (b, a) 
+            for a, b in zip(id1_str, id2_str)
+        ]
         
-        # Keep best match for each pair
         best_matches = matches_df.loc[
             matches_df.groupby('pair_key')['similarity_score'].idxmax()
         ].copy()
@@ -353,56 +512,48 @@ class FuzzyMatcher(Matcher):
         name_column1: str = 'name', 
         id_column2: str = 'id',
         name_column2: str = 'name',
-        name_columns1: Optional[List[str]] = None,  # NEW: Multiple name columns for df1
-        name_columns2: Optional[List[str]] = None,  # NEW: Multiple name columns for df2
+        name_columns1: Optional[List[str]] = None,
+        name_columns2: Optional[List[str]] = None,
         **kwargs
     ) -> MatchResult:
         """
-        Find matches between two datasets with support for multiple name columns.
+        Find matches between two datasets with optional multiple name columns.
         
         Parameters
         ----------
-        df1, df2 : pd.DataFrame
-            Datasets to match
-        id_column1, id_column2 : str
-            ID column names
-        name_column1, name_column2 : str
-            Primary name columns (used if name_columns1/2 not specified)
-        name_columns1 : List[str], optional
-            Multiple name columns to try for df1 (e.g., ['legal_name', 'short_name'])
-            If provided, will try matching on all combinations and keep best match
-        name_columns2 : List[str], optional
-            Multiple name columns to try for df2
-        
+        df1 : pd.DataFrame
+            First dataset
+        df2 : pd.DataFrame
+            Second dataset
+        id_column1 : str, default='id'
+            ID column name in df1
+        name_column1 : str, default='name'
+            Primary name column in df1
+        id_column2 : str, default='id'
+            ID column name in df2
+        name_column2 : str, default='name'
+            Primary name column in df2
+        name_columns1 : list of str or None, optional
+            Multiple name columns to try in df1. If provided, will try all
+            combinations with name_columns2 and keep best matches
+        name_columns2 : list of str or None, optional
+            Multiple name columns to try in df2
+        **kwargs
+            Additional keyword arguments (unused)
+            
         Returns
         -------
         MatchResult
-            Cross-dataset matches with 'matched_column1' and 'matched_column2' 
-            showing which columns produced the match
-        
-        Examples
-        --------
-        # Match using multiple columns
-        >>> matcher.find_cross_matches(
-        ...     df1, df2,
-        ...     id_column1='id', 
-        ...     name_columns1=['legal_name', 'short_name'],
-        ...     id_column2='id',
-        ...     name_columns2=['company_name', 'dba_name']
-        ... )
+            Cross-dataset matches with similarity scores
         """
-        
-        # Use name_columns if provided, otherwise use single name_column
         cols1 = name_columns1 if name_columns1 else [name_column1]
         cols2 = name_columns2 if name_columns2 else [name_column2]
         
-        # If using multiple columns, find matches for each combination
         if name_columns1 or name_columns2:
             return self._find_cross_matches_multi_column(
                 df1, df2, id_column1, id_column2, cols1, cols2
             )
         
-        # Original single-column logic
         df1_clean = df1[[id_column1, name_column1]].dropna().copy()
         df2_clean = df2[[id_column2, name_column2]].dropna().copy()
         
