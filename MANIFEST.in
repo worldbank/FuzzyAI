@@ -1,5 +1,7 @@
 include README.md
 include LICENSE
+include WB-IGO-RIDER.md
+include CITATION.cff
 include requirements.txt
 recursive-include deduplix *.py
 recursive-exclude * __pycache__

@@ -57,7 +57,7 @@ pip install -r requirements.txt
 
 **Manual installation from source:**
 ```bash
-git clone https://github.com/yourusername/fuzzy-ai.git
+git clone https://github.com/worldbank/fuzzy-ai.git
 cd fuzzy-ai
 pip install -e .
 ```
@@ -859,9 +859,13 @@ Contributions welcome! Please:
 
 See our contributing guidelines for details.
 
+## Contact
+
+📧 **Portfolio Intelligence Team** — [portfoliointelligence@worldbankgroup.org](mailto:portfoliointelligence@worldbankgroup.org)
+
 ## License
 
-MIT License - see LICENSE file for details
+This project is licensed under the MIT License together with the World Bank IGO Rider. The Rider is purely procedural: it reserves all privileges and immunities enjoyed by the World Bank, without adding restrictions to the MIT permissions. Please review both files before using, distributing or contributing.
 
 ## Citation
 
@@ -870,17 +874,17 @@ If you use Fuzzy AI in your research, please cite:
 ```bibtex
 @software{fuzzy_ai,
   title = {Fuzzy AI: Entity Deduplication and Matching with LLM Validation},
-  author = {Your Name},
+  author = {World Bank},
   year = {2024},
-  url = {https://github.com/yourusername/fuzzy-ai}
+  url = {https://github.com/worldbank/fuzzy-ai}
 }
 ```
 
 ## Support
 
-- **Issues**: https://github.com/yourusername/fuzzy-ai/issues
-- **Discussions**: https://github.com/yourusername/fuzzy-ai/discussions
-- **Documentation**: https://fuzzy-ai.readthedocs.io
+- **Issues**: https://github.com/worldbank/fuzzy-ai/issues
+- **Discussions**: https://github.com/worldbank/fuzzy-ai/discussions
+- **Documentation**: https://github.com/worldbank/fuzzy-ai
 
 ## Changelog
 

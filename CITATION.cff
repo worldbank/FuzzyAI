@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Fuzzy AI: Entity Deduplication and Matching with LLM Validation"
+authors:
+  - name: "World Bank"
+    email: "portfoliointelligence@worldbankgroup.org"
+version: "0.1.0"
+date-released: "2025-04-10"
+url: "https://github.com/worldbank/fuzzy-ai"
+repository-code: "https://github.com/worldbank/fuzzy-ai"
+license: MIT
+keywords:
+  - deduplication
+  - entity-matching
+  - fuzzy-matching
+  - llm-validation
+  - data-quality
+  - fuzzy-ai
