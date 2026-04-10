@@ -6,12 +6,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="deduplix",
     version="0.1.0",
-    author="IFC PI",
-    author_email="IFC.PI@example.com",
-    description="Simple and efficient entity deduplication library",
+    author="World Bank",
+    author_email="portfoliointelligence@worldbankgroup.org",
+    description="Fuzzy AI — Entity deduplication and matching with LLM validation",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/PITEAM(tochange)/deduplix",
+    url="https://github.com/worldbank/fuzzy-ai",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -52,4 +52,3 @@ setup(
         ],
     },
 )
-
