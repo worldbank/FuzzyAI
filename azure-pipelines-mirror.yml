@@ -1,20 +1,20 @@
 trigger:
   branches:
     include:
-      - '*'   # mirrors all branches
+      - '*'
 
 pool:
   vmImage: ubuntu-latest
 
 steps:
   - checkout: self
-    fetchDepth: 0          # full history, not shallow
+    fetchDepth: 0
     persistCredentials: true
 
   - script: |
       git remote add github https://$(GITHUB_PAT)@github.com/worldbank/FuzzyAI.git
       git fetch --all
-      git push github --mirror
-    displayName: 'Mirror to worldbank/FuzzyAI'
+      git push github refs/heads/main:refs/heads/main
+    displayName: 'Push to worldbank/FuzzyAI'
     env:
       GITHUB_PAT: $(GITHUB_PAT)
