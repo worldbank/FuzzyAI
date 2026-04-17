@@ -6,6 +6,10 @@ trigger:
 pool:
   vmImage: ubuntu-latest
 
+variables:
+  - name: GITHUB_PAT
+    value: $(GITHUB_PAT) 
+
 steps:
   - checkout: self
     fetchDepth: 0
@@ -13,8 +17,5 @@ steps:
 
   - script: |
       git remote add github https://$(GITHUB_PAT)@github.com/worldbank/FuzzyAI.git
-      git fetch --all
       git push github refs/heads/main:refs/heads/main
     displayName: 'Push to worldbank/FuzzyAI'
-    env:
-      GITHUB_PAT: $(GITHUB_PAT)
