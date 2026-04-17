@@ -15,6 +15,7 @@ steps:
     persistCredentials: true
 
   - script: |
+      git checkout master || git checkout -b master
       git remote add github https://$(GITHUB_PAT)@github.com/worldbank/FuzzyAI.git
-      git push github refs/heads/master:refs/heads/master
+      git push github HEAD:refs/heads/master
     displayName: 'Push to worldbank/FuzzyAI'
