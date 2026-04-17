@@ -7,8 +7,7 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
-  - name: GITHUB_PAT
-    value: $(GITHUB_PAT)
+  - group: Github
 
 steps:
   - checkout: self
@@ -17,5 +16,5 @@ steps:
 
   - script: |
       git remote add github https://$(GITHUB_PAT)@github.com/worldbank/FuzzyAI.git
-      git push github refs/heads/main:refs/heads/main
+      git push github refs/heads/master:refs/heads/master
     displayName: 'Push to worldbank/FuzzyAI'
