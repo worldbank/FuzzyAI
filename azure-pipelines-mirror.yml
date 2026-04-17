@@ -17,5 +17,5 @@ steps:
   - script: |
       git checkout master || git checkout -b master
       git remote add github https://$(GITHUB_PAT)@github.com/worldbank/FuzzyAI.git
-      git push github HEAD:refs/heads/master
+      git push github HEAD:refs/heads/master --force
     displayName: 'Push to worldbank/FuzzyAI'
