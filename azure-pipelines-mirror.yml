@@ -8,7 +8,7 @@ pool:
 
 variables:
   - name: GITHUB_PAT
-    value: $(GITHUB_PAT) 
+    value: $(GITHUB_PAT)
 
 steps:
   - checkout: self
