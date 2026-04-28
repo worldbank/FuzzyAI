@@ -90,12 +90,3 @@ llm_test_output/
 test_config.yaml
 test.ipynb
 
-# Files that should not be published
-openai_test
-(Clone)*
-.claude/
-deduplix/code_reviewer.py
-example_code_review.py
-run_review.py
-mle_review_report.md
-publishing-guide.md
