@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Generator
 
 import sys
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from deduplix.core import DeduplicationPipeline, MatchResult, ValidationResult, DeduplicationResult
 from deduplix.matchers import FuzzyMatcher

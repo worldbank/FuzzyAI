@@ -43,13 +43,10 @@ The library provides a complete toolkit for:
 
 ```bash
 # Basic installation
-pip install fuzzy-ai
+pip install deduplix
 
 # With LLM validation support
-pip install fuzzy-ai[llm]
-
-# With all dependencies
-pip install fuzzy-ai[all]
+pip install deduplix[llm]
 
 # Install with all dependencies from requirements
 pip install -r requirements.txt
@@ -900,5 +897,17 @@ If you use Fuzzy AI in your research, please cite:
 - Comprehensive error handling
 - CLI tool
 - Production-ready performance optimizations
+
+## Publishing to PyPI
+
+This repository is set up for modern Python packaging and PyPI publishing.
+
+```bash
+python -m pip install --upgrade pip build twine
+python -m build
+twine check dist/*
+```
+
+For the first release, create an account on PyPI and configure trusted publishing in the GitHub repository settings, then push a tag like `v0.1.0` to trigger the workflow. The workflow publishes the built package automatically.
 
 ---

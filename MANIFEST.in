@@ -3,6 +3,6 @@ include LICENSE
 include WB-IGO-RIDER.md
 include CITATION.cff
 include requirements.txt
-recursive-include deduplix *.py
+recursive-include src/deduplix *.py
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
