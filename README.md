@@ -43,10 +43,10 @@ The library provides a complete toolkit for:
 
 ```bash
 # Basic installation
-pip install fuzzy-ai
+pip install fuzzy-ai-lib
 
 # With LLM validation support
-pip install fuzzy-ai[llm]
+pip install fuzzy-ai-lib[llm]
 
 # With all dependencies
 pip install fuzzy-ai[all]
