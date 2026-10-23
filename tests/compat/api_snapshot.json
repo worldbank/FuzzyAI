@@ -752,6 +752,26 @@
    [
     "use_langchain_databricks",
     "False"
+   ],
+   [
+    "on_failure",
+    "'match'"
+   ],
+   [
+    "prompt_template",
+    "'pair_validation_v1.j2'"
+   ],
+   [
+    "parser",
+    "None"
+   ],
+   [
+    "max_tokens",
+    "4096"
+   ],
+   [
+    "cache",
+    "None"
    ]
   ],
   "LLMValidator.__init__": [
@@ -810,6 +830,26 @@
    [
     "use_langchain_databricks",
     "False"
+   ],
+   [
+    "on_failure",
+    "'match'"
+   ],
+   [
+    "prompt_template",
+    "'pair_validation_v1.j2'"
+   ],
+   [
+    "parser",
+    "None"
+   ],
+   [
+    "max_tokens",
+    "4096"
+   ],
+   [
+    "cache",
+    "None"
    ]
   ],
   "LLMValidator.validate": [

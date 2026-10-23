@@ -8,6 +8,10 @@ enabling better error handling and debugging.
 from typing import Optional, Dict, Any, List
 
 
+class DeduplixWarning(UserWarning):
+    """Warning category for deduplix runtime notices (for example LLM fallbacks)."""
+
+
 class DeduplixError(Exception):
     """
     Base exception class for all deduplix operations.
