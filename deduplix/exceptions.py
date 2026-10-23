@@ -67,7 +67,7 @@ class DeduplixError(Exception):
         }
 
 
-class DataValidationError(DeduplixError):
+class DataValidationError(DeduplixError, ValueError):
     """
     Raised when input data fails validation.
 
@@ -201,7 +201,7 @@ class CheckpointError(DeduplixError):
             ]
 
 
-class ConfigurationError(DeduplixError):
+class ConfigurationError(DeduplixError, ValueError):
     """
     Raised for configuration-related errors.
 
