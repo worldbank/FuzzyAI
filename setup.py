@@ -13,6 +13,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/worldbank/fuzzy-ai",
     packages=find_packages(),
+    package_data={"deduplix.normalize.tables": ["*.yaml"], "deduplix.llm": ["prompts/*.j2"]},
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",

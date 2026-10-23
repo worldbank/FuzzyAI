@@ -520,6 +520,10 @@
    [
     "score_multiplier",
     "1.0"
+   ],
+   [
+    "blocking",
+    "None"
    ]
   ],
   "FuzzyMatcher.__init__": [
@@ -566,6 +570,10 @@
    [
     "score_multiplier",
     "1.0"
+   ],
+   [
+    "blocking",
+    "None"
    ]
   ],
   "FuzzyMatcher.find_cross_matches": [

@@ -306,7 +306,7 @@ class Pipeline:
             h.on_stage_end(name, ctx, out if is_pairs else None, secs)
         return out
 
-    def _run(self, ctx: RunContext) -> PipelineResult:
+    def _run(self, ctx: RunContext, stop_after: Optional[str] = None) -> PipelineResult:
         t_start = time.perf_counter()
         ctx.artifacts["stage_configs"] = self.stage_configs()
         ctx.artifacts["data_hash"] = self._data_hash(ctx)
@@ -319,6 +319,8 @@ class Pipeline:
         pairs = self._stage("compare", ctx, lambda: self._compare(ctx, pairs), pairs, stats)
         pairs = self._stage("score", ctx, lambda: self._score(ctx, pairs), pairs, stats)
         pairs = self._stage("route", ctx, lambda: self._route(ctx, pairs), pairs, stats)
+        if stop_after == "route":
+            return self._partial(ctx, pairs, stats, t_start)
         pairs = self._stage("validate", ctx, lambda: self._validate(ctx, pairs), pairs, stats)
 
         records, right_records, consolidated = ctx.left.copy(), None, None
@@ -350,6 +352,17 @@ class Pipeline:
         for h in self.hooks:
             h.on_run_end(ctx, result)
         return result
+
+    def _partial(self, ctx: RunContext, pairs: pd.DataFrame, stats: List[Dict[str, Any]],
+                 t_start: float) -> PipelineResult:
+        """Result of a run that stopped after routing (used by EngineMatcher)."""
+        return PipelineResult(
+            records=ctx.left.copy(), pairs=pairs, mode=ctx.mode, columns=ctx.columns,
+            config=self.to_config(), right_records=ctx.right.copy() if ctx.mode == "link" else None,
+            legacy_score_feature=self.legacy_score_feature,
+            stats={"stages": stats, "total_seconds": time.perf_counter() - t_start,
+                   "n_left": len(ctx.left), "n_right": len(ctx.right), "n_pairs": len(pairs),
+                   "usage": ctx.artifacts.get("usage", {})})
 
     # ------------------------------------------------------------------ stages
     def _normalize(self, ctx: RunContext) -> None:

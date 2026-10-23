@@ -10,7 +10,10 @@ from .router import RuleRouter, ThresholdRouter
 __all__ = [
     "Pipeline", "PipelineResult", "RunContext", "ColumnMap", "register", "build", "list_components",
     "load_pipeline", "ThresholdRouter", "RuleRouter", "LoggingHook", "ProgressHook",
-    "CheckpointHook", "MLflowHook",
+    "CheckpointHook", "MLflowHook", "EngineMatcher", "as_engine_validator", "as_legacy_validator",
 ]
 
-from .. import cluster  # noqa: E402,F401  (registers clusterers)
+from .compat import EngineMatcher, as_engine_validator, as_legacy_validator  # noqa: E402
+
+# importing the component packages registers their normalizers, blockers, comparators, ...
+from .. import blocking, cluster, compare, llm, normalize, scoring  # noqa: E402,F401

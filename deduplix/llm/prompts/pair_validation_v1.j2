@@ -1,0 +1,11 @@
+Analyze these potential duplicate entity pairs. Return ONLY JSON with a top-level key 'decisions', where each item is {"pair_index": <index>, "is_duplicate": true|false, "reason": "..."}.
+
+Consider these rules:
+- Carefully determine whether each pair are duplicated.
+{% if instructions %}- {{ instructions }}
+{% endif %}
+Entity Pairs:
+{% for p in pairs %}Pair {{ p.idx }}: '{{ p.left.name }}' vs '{{ p.right.name }}' (similarity: {{ '%.1f'|format(p.features.similarity_score) }}%)
+{% set parts = [] %}{% for col in metadata_columns %}{% if col in p.left %}{% set _ = parts.append(col ~ ': ' ~ (p.left[col] if p.left[col] is not none else 'N/A') ~ ' vs ' ~ (p.right[col] if p.right[col] is not none else 'N/A')) %}{% endif %}{% endfor %}{% if parts %}  Metadata: {{ parts|join(', ') }}
+{% endif %}{% endfor %}
+Return only JSON.

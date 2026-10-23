@@ -26,6 +26,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "performance: marks performance tests",
+    "extras: tests needing optional extras (scikit-learn, datasketch, metaphone, ...)",
 ]
 
 [tool.coverage.run]

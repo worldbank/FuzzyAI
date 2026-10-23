@@ -1,0 +1,17 @@
+You are deduplicating a list of organisations. For each numbered pair below decide whether both records describe the same real-world entity.
+
+Rules:
+- Differences in legal form spelling (Ltd vs Limited) do not make two entities different.
+- Different fund numbers, series or vintage years usually mean different entities.
+- When the evidence is insufficient, lower your confidence instead of guessing.
+{% if instructions %}- {{ instructions }}
+{% endif %}
+Return ONLY JSON with a top-level key 'decisions'. Each item must be {"pair_index": <index>, "is_duplicate": true|false, "confidence": <probability between 0 and 1 that the records are the same entity>, "reason": "<short reason>"}. Answer every pair.
+
+Entity Pairs:
+{% for p in pairs %}Pair {{ p.idx }}: '{{ p.left.name }}' vs '{{ p.right.name }}'
+{% for col in metadata_columns %}{% if col in p.left %}  {{ col }}: {{ p.left[col] if p.left[col] is not none else 'N/A' }} vs {{ p.right[col] if p.right[col] is not none else 'N/A' }}
+{% endif %}{% endfor %}{% for col in parsed_columns %}{% if col in p.left and (p.left[col] or p.right[col]) %}  {{ col }}: {{ p.left[col] if p.left[col] else 'none' }} vs {{ p.right[col] if p.right[col] else 'none' }}
+{% endif %}{% endfor %}{% for k, v in p.features.items() %}  {{ k }}: {{ v }}
+{% endfor %}{% endfor %}
+Return only JSON.

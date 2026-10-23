@@ -1,0 +1,8 @@
+# Per-language stopwords used by remove_stopwords.
+en: [the, of, and, for, in, "on", at, to, a, an]
+fr: [le, la, les, de, du, des, et, en, au, aux, d, l]
+de: [der, die, das, und, fur, von, zu, im, am]
+es: [el, la, los, las, de, del, y, en, para]
+pt: [o, a, os, as, de, do, da, dos, das, e, em, para]
+it: [il, lo, la, i, gli, le, di, del, della, e, in, per]
+nl: [de, het, een, en, van, voor, in]

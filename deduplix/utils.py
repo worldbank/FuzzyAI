@@ -341,3 +341,9 @@ def simple_remove_duplicates(original_df: pd.DataFrame, dedup_result, id_column:
         first_entity = group_df.iloc[0]['entity_id']
         entities_to_keep.append(first_entity)
     return original_df[original_df[id_column].isin(entities_to_keep)].copy()
+
+def load_pipeline(path_or_dict):
+    """Build an engine :class:`deduplix.Pipeline` from YAML or a dict (re-export)."""
+    from .engine.config import load_pipeline as _load
+
+    return _load(path_or_dict)

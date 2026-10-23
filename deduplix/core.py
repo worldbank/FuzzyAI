@@ -381,6 +381,10 @@ class DeduplicationPipeline:
         checkpoint_compress: bool = False,
         hooks=None,
     ):
+        from .engine.compat import as_legacy_validator, is_engine_validator
+
+        if validator is not None and is_engine_validator(validator):
+            validator = as_legacy_validator(validator)
         self.matcher = matcher
         self.validator = validator
         self.hooks = list(hooks or [])

@@ -1,0 +1,34 @@
+# Legal-form table. Variants are written as they appear in names; they are lower-cased,
+# accent-folded and punctuation-normalised ("S.A. de C.V." == "sa de cv") when compiled.
+# countries: empty = any country. position: suffix | prefix | any.
+- {code: LTD, variants: [ltd, "ltd.", limited, "co ltd", "co., ltd.", "company limited"], countries: [], position: suffix}
+- {code: PLC, variants: [plc, "public limited company"], countries: [GB, IE, NG, KE, GH], position: suffix}
+- {code: LLC, variants: [llc, "l.l.c.", "limited liability company"], countries: [US, AE], position: suffix}
+- {code: LLP, variants: [llp, "l.l.p.", "limited liability partnership"], countries: [US, GB, IN, SG], position: suffix}
+- {code: LP, variants: [lp, "l.p.", "limited partnership"], countries: [US, GB, CA, KY, LU, MU, JE, GG, BM, VG], position: suffix}
+- {code: INC, variants: [inc, "inc.", incorporated], countries: [US, CA, PH], position: suffix}
+- {code: CORP, variants: [corp, "corp.", corporation], countries: [US, CA, PH, JP], position: suffix}
+- {code: CO, variants: [co, "co.", company], countries: [], position: suffix}
+- {code: GMBH, variants: [gmbh, mbh], countries: [DE, AT, CH], position: suffix}
+- {code: AG, variants: [ag, aktiengesellschaft], countries: [DE, AT, CH, LI], position: suffix}
+- {code: KG, variants: [kg, kommanditgesellschaft], countries: [DE, AT], position: suffix}
+- {code: SA, variants: [sa, "s.a.", "societe anonyme", "sociedad anonima", "sociedade anonima"], countries: [FR, BE, LU, CH, ES, PT, PL, GR, BR, AR, CL, CO, PE, UY, MA], position: suffix}
+- {code: SAS, variants: [sas, "s.a.s.", "societe par actions simplifiee"], countries: [FR, CO], position: suffix}
+- {code: SARL, variants: [sarl, "s.a.r.l.", "societe a responsabilite limitee"], countries: [FR, LU, BE, CH, MA, TN, LB], position: suffix}
+- {code: SADECV, variants: ["s.a. de c.v.", "sa de cv"], countries: [MX], position: suffix}
+- {code: SABDECV, variants: ["s.a.b. de c.v.", "sab de cv"], countries: [MX], position: suffix}
+- {code: SPA, variants: [spa, "s.p.a.", "societa per azioni"], countries: [IT, DZ], position: suffix}
+- {code: SRL, variants: [srl, "s.r.l.", "societa a responsabilita limitata"], countries: [IT, RO, BE, AR, MX], position: suffix}
+- {code: BV, variants: [bv, "b.v.", "besloten vennootschap"], countries: [NL, CW], position: suffix}
+- {code: NV, variants: [nv, "n.v.", "naamloze vennootschap"], countries: [NL, BE, CW], position: suffix}
+- {code: AB, variants: [ab, aktiebolag], countries: [SE, FI], position: suffix}
+- {code: AS, variants: [as, "a/s", "a.s.", "anonim sirketi"], countries: [NO, DK, CZ, SK, EE, TR], position: suffix}
+- {code: OY, variants: [oy, oyj], countries: [FI], position: suffix}
+- {code: PTY, variants: [pty, "pty ltd", "pty. ltd.", "proprietary limited"], countries: [AU, ZA, NA, BW], position: suffix}
+- {code: PTE, variants: [pte, "pte ltd", "pte. ltd."], countries: [SG], position: suffix}
+- {code: BHD, variants: [bhd, berhad], countries: [MY], position: suffix}
+- {code: SDN, variants: ["sdn bhd", "sdn berhad", sdn], countries: [MY], position: suffix}
+- {code: KK, variants: [kk, "k.k.", "kabushiki kaisha"], countries: [JP], position: suffix}
+- {code: PVT, variants: [pvt, "pvt ltd", "pvt. ltd.", "pvt limited", "private limited"], countries: [IN, PK, LK, BD, NP, ZW], position: suffix}
+- {code: LIMITADA, variants: [limitada, ltda, "ltda."], countries: [BR, CL, CO, PE, PT, BO, EC], position: suffix}
+- {code: EIRELI, variants: [eireli], countries: [BR], position: suffix}

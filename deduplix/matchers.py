@@ -46,6 +46,11 @@ class FuzzyMatcher(Matcher):
         Remove punctuation before matching
     punctuation_pattern : str, default=r'[^\\w\\s]'
         Regex pattern for punctuation removal
+    blocking : list, optional
+        Blocker specs (registry names, ``{name: params}`` or blocker objects). When given,
+        candidate pairs come from these blockers instead of the full ``cdist`` matrix and are
+        scored with the same scorer, threshold and preprocessing. ``None`` keeps the exact
+        ``cdist`` path.
     score_multiplier : float, default=1.0
         Multiplier applied to raw scores. Useful when scorer returns 0-1
         range (e.g., jaro, jaro_winkler) to rescale to 0-100.
@@ -86,7 +91,8 @@ class FuzzyMatcher(Matcher):
         strip_whitespace: bool = True,
         remove_punctuation: bool = False,
         punctuation_pattern: str = r'[^\w\s]',
-        score_multiplier: float = 1.0
+        score_multiplier: float = 1.0,
+        blocking: Optional[List[Any]] = None
     ):
         self.threshold = threshold
         self.scorer_name = scorer
@@ -100,6 +106,7 @@ class FuzzyMatcher(Matcher):
         self.remove_punctuation = remove_punctuation
         self.punctuation_pattern = punctuation_pattern
         self.score_multiplier = score_multiplier
+        self.blocking = blocking
 
     # ------------------------------------------------------------------
     # Scorer resolution
@@ -340,8 +347,7 @@ class FuzzyMatcher(Matcher):
         entity_counts: Dict[Any, int] = {}
         keep_indices = []
 
-        for idx, row in pairs_sorted.iterrows():
-            id1, id2 = row['id1'], row['id2']
+        for idx, id1, id2 in zip(pairs_sorted.index, pairs_sorted['id1'], pairs_sorted['id2']):
             count1 = entity_counts.get(id1, 0)
             count2 = entity_counts.get(id2, 0)
 
@@ -351,6 +357,48 @@ class FuzzyMatcher(Matcher):
                 entity_counts[id2] = count2 + 1
 
         return pairs_df.loc[keep_indices]
+
+    # ------------------------------------------------------------------
+    # Blocked candidate generation (opt-in via ``blocking=[...]``)
+    # ------------------------------------------------------------------
+
+    def _blocked_pairs(
+        self,
+        ids1: List, orig1: List[str], prep1: List[str],
+        ids2: List, orig2: List[str], prep2: List[str],
+        within_dataset: bool,
+    ) -> List[Dict]:
+        """Candidates from the configured blockers, scored like the cdist path."""
+        from .blocking.union import union_candidates
+        from .engine.context import ColumnMap, RunContext
+        from .engine.registry import build
+        from .engine import schema as S
+
+        left = pd.DataFrame({'id': ids1, 'name': orig1, 'name_norm': prep1})
+        right = left if within_dataset else pd.DataFrame({'id': ids2, 'name': orig2, 'name_norm': prep2})
+        ctx = RunContext(left=left, right=right, mode='dedup' if within_dataset else 'link',
+                         columns=ColumnMap())
+        frames, seen = [], {}
+        for spec in self.blocking:
+            blocker = build('blocker', spec)
+            base = getattr(blocker, 'name', None) or type(blocker).__name__.lower()
+            seen[base] = seen.get(base, 0) + 1
+            blocker.fit(ctx.right, ctx)
+            frames.append((base if seen[base] == 1 else f"{base}_{seen[base]}",
+                           blocker.candidates(ctx.left, ctx)))
+        cand = union_candidates(frames, n_right=len(ctx.right), mode=ctx.mode, n_left=len(ctx.left))
+        if cand.empty:
+            return []
+        a = [prep1[i] for i in cand[S.I1].to_numpy()]
+        b = [prep2[i] if not within_dataset else prep1[i] for i in cand[S.I2].to_numpy()]
+        scores = process.cpdist(a, b, scorer=self.scorer, workers=self.n_workers, dtype=np.float32)
+        scores = scores.astype(np.float64) * self.score_multiplier
+        keep = scores >= self.threshold
+        i1, i2, sc = cand[S.I1].to_numpy()[keep], cand[S.I2].to_numpy()[keep], scores[keep]
+        o2 = orig1 if within_dataset else orig2
+        d2 = ids1 if within_dataset else ids2
+        return [{'id1': ids1[x], 'id2': d2[y], 'name1': orig1[x], 'name2': o2[y],
+                 'similarity_score': float(v)} for x, y, v in zip(i1, i2, sc)]
 
     # ------------------------------------------------------------------
     # Within-dataset matching
@@ -413,16 +461,22 @@ class FuzzyMatcher(Matcher):
         ids, names_original, names_preprocessed = map(list, zip(*valid))
         n = len(ids)
 
-        print(f"  Computing pairwise similarity for {n:,} entities "
-              f"using rapidfuzz.process.cdist...")
-
         all_results = []
+        if self.blocking:
+            print(f"  Blocked matching for {n:,} entities using {len(self.blocking)} blocker(s)...")
+            all_results = self._blocked_pairs(ids, names_original, names_preprocessed,
+                                              ids, names_original, names_preprocessed, True)
+            n_batches = 0
+        else:
+            print(f"  Computing pairwise similarity for {n:,} entities "
+                  f"using rapidfuzz.process.cdist...")
+            n_batches = (n + self.batch_size - 1) // self.batch_size
 
         # Process in row-batches to control memory
         # For within-dataset: batch rows i, compare against all j > i
         # to naturally get the upper triangle (no symmetric duplicates)
         for batch_start in tqdm(
-            range(0, n, self.batch_size),
+            range(0, n, self.batch_size) if not self.blocking else [],
             desc="cdist batches",
             unit="batch"
         ):
@@ -480,7 +534,7 @@ class FuzzyMatcher(Matcher):
             'scorer': self.scorer_name,
             'total_entities': n,
             'matches_found': len(pairs_df),
-            'batches_processed': (n + self.batch_size - 1) // self.batch_size,
+            'batches_processed': n_batches,
             'preprocessing': {
                 'lowercase': self.lowercase,
                 'strip_whitespace': self.strip_whitespace,
@@ -529,6 +583,16 @@ class FuzzyMatcher(Matcher):
         """
         n1 = len(df1_ids)
         all_results = []
+
+        if self.blocking:
+            results = self._blocked_pairs(df1_ids, df1_names_orig, df1_names_prep,
+                                          df2_ids, df2_names_orig, df2_names_prep, False)
+            for r in results:
+                r['matched_column1'] = col1
+                r['matched_column2'] = col2
+                r['source1'] = 'df1'
+                r['source2'] = 'df2'
+            return results
 
         for batch_start in range(0, n1, self.batch_size):
             batch_end = min(batch_start + self.batch_size, n1)
