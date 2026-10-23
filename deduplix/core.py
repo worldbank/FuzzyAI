@@ -10,7 +10,14 @@ from abc import ABC, abstractmethod
 from .exceptions import ConfigurationError, DataValidationError
 from .utils import remove_duplicates_after_deduplication  # noqa: F401  (re-exported)
 
-_UNSET = object()
+class _Unset:
+    """Sentinel for 'argument not passed' with a stable repr."""
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
 
 @dataclass
 class MatchResult:

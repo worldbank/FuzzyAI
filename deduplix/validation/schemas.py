@@ -8,7 +8,7 @@ Defines validation schemas for:
 """
 
 from typing import List, Union, Optional, Any, Dict
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import pandas as pd
 
 
@@ -18,14 +18,16 @@ class EntityDataSchema(BaseModel):
     id: Union[str, int] = Field(..., description="Entity identifier")
     name: str = Field(..., min_length=1, max_length=10000, description="Entity name")
 
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_name_not_empty(cls, v):
         """Ensure name is not empty after stripping whitespace"""
         if not v or not str(v).strip():
             raise ValueError("Entity name cannot be empty or whitespace-only")
         return str(v).strip()
 
-    @validator('id')
+    @field_validator('id')
+    @classmethod
     def validate_id_format(cls, v):
         """Validate ID format and ensure it's not empty"""
         if v is None or (isinstance(v, str) and not v.strip()):
@@ -48,14 +50,16 @@ class DeduplicationInputSchema(BaseModel):
     additional_columns: Optional[List[str]] = Field(default=None, description="Additional columns for matching")
     threshold: Optional[float] = Field(default=None, ge=0.0, le=100.0, description="Similarity threshold")
 
-    @validator('entity_count')
+    @field_validator('entity_count')
+    @classmethod
     def validate_minimum_entities(cls, v):
         """Ensure at least 2 entities for deduplication"""
         if v < 2:
             raise ValueError("At least 2 entities required for deduplication")
         return v
 
-    @validator('additional_columns')
+    @field_validator('additional_columns')
+    @classmethod
     def validate_additional_columns(cls, v):
         """Validate additional columns list"""
         if v is not None:
@@ -77,18 +81,19 @@ class CrossDatasetInputSchema(BaseModel):
     name_columns1: Optional[List[str]] = Field(default=None, description="Multiple name columns for first dataset")
     name_columns2: Optional[List[str]] = Field(default=None, description="Multiple name columns for second dataset")
 
-    @root_validator(skip_on_failure=True)
-    def validate_minimum_entities_cross(cls, values):
+    @model_validator(mode="after")
+    def validate_minimum_entities_cross(self):
         """Ensure both datasets have at least 1 entity"""
-        df1_count = values.get('df1_entity_count', 0)
-        df2_count = values.get('df2_entity_count', 0)
+        df1_count = self.df1_entity_count
+        df2_count = self.df2_entity_count
 
         if df1_count == 0 or df2_count == 0:
             raise ValueError("Both datasets must contain at least 1 entity for cross-dataset matching")
 
-        return values
+        return self
 
-    @validator('name_columns1', 'name_columns2')
+    @field_validator('name_columns1', 'name_columns2')
+    @classmethod
     def validate_name_columns(cls, v):
         """Validate multiple name columns"""
         if v is not None:
@@ -107,8 +112,7 @@ class CrossDatasetInputSchema(BaseModel):
 class DataFrameValidationSchema(BaseModel):
     """Schema for validating DataFrame structure and content"""
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     required_columns: List[str] = Field(..., description="Required columns that must exist")
     min_rows: int = Field(default=1, ge=0, description="Minimum number of rows")
@@ -116,7 +120,8 @@ class DataFrameValidationSchema(BaseModel):
     allowed_dtypes: Optional[Dict[str, List[str]]] = Field(default=None, description="Allowed data types per column")
     null_policy: str = Field(default="warn", pattern="^(strict|warn|ignore)$", description="How to handle null values")
 
-    @validator('required_columns')
+    @field_validator('required_columns')
+    @classmethod
     def validate_required_columns(cls, v):
         """Validate required columns list"""
         if not v:
@@ -132,13 +137,13 @@ class DataFrameValidationSchema(BaseModel):
 
         return unique_cols
 
-    @root_validator(skip_on_failure=True)
-    def validate_row_constraints(cls, values):
+    @model_validator(mode="after")
+    def validate_row_constraints(self):
         """Validate row count constraints"""
-        min_rows = values.get('min_rows', 1)
-        max_rows = values.get('max_rows')
+        min_rows = self.min_rows
+        max_rows = self.max_rows
 
         if max_rows is not None and min_rows > max_rows:
             raise ValueError("min_rows cannot be greater than max_rows")
 
-        return values
+        return self

@@ -99,3 +99,8 @@ example_code_review.py
 run_review.py
 mle_review_report.md
 publishing-guide.md
+
+# test fixtures that must be tracked
+!tests/golden/*.parquet
+!tests/golden/*.json
+!tests/compat/api_snapshot.json

@@ -80,7 +80,7 @@ class FuzzyMatcher(Matcher):
         threshold: float = 80.0,
         scorer: str = 'token_sort_ratio',
         max_matches_per_entity: Optional[int] = None,
-        n_workers: Optional[int] = 1,
+        n_workers: Optional[int] = 4,
         batch_size: int = 500,
         lowercase: bool = True,
         strip_whitespace: bool = True,
@@ -92,6 +92,7 @@ class FuzzyMatcher(Matcher):
         self.scorer_name = scorer
         self.scorer = self._get_scorer(scorer)
         self.max_matches = max_matches_per_entity
+        self.max_matches_per_entity = max_matches_per_entity
         self.n_workers = n_workers  # None = let rapidfuzz decide
         self.batch_size = batch_size
         self.lowercase = lowercase
