@@ -24,7 +24,7 @@ class FileCheckpointer(BaseCheckpointer):
     Stores checkpoint data as Parquet files with accompanying JSON metadata.
     """
 
-    def __init__(self, checkpoint_dir: str = ".deduplix_checkpoints", **kwargs):
+    def __init__(self, checkpoint_dir: str = ".deduplix_checkpoints", compress: bool = True, **kwargs):
         """
         Initialize file-based checkpointer
 
@@ -32,10 +32,13 @@ class FileCheckpointer(BaseCheckpointer):
         ----------
         checkpoint_dir : str
             Directory to store checkpoint files
+        compress : bool
+            Compress Parquet files (gzip)
         **kwargs
             Additional configuration parameters
         """
         super().__init__(kwargs)
+        self.compress = compress
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(exist_ok=True, parents=True)
 
@@ -66,7 +69,7 @@ class FileCheckpointer(BaseCheckpointer):
             meta_path = self.checkpoint_dir / f"{checkpoint_id}.meta.json"
 
             # Save data as Parquet
-            data.to_parquet(data_path)
+            data.to_parquet(data_path, compression="gzip" if self.compress else None)
 
             # Save metadata as JSON
             checkpoint_metadata = {

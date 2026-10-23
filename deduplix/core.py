@@ -7,11 +7,10 @@ import json
 import hashlib
 from datetime import datetime
 from abc import ABC, abstractmethod
-try:
-    from .utils import remove_duplicates_after_deduplication
-except ImportError:
-    def remove_duplicates_after_deduplication(original_df, dedup_result, id_column='id', keep_strategy='first'):
-        return original_df
+from .exceptions import ConfigurationError, DataValidationError
+from .utils import remove_duplicates_after_deduplication  # noqa: F401  (re-exported)
+
+_UNSET = object()
 
 @dataclass
 class MatchResult:
@@ -41,6 +40,8 @@ class DeduplicationResult:
         if group_data.empty:
             return []
         group_id = group_data['group_id'].iloc[0]
+        if group_id == 0:  # group_id 0 marks singletons, which share no group
+            return [entity_id]
         return self.entity_groups[
             self.entity_groups['group_id'] == group_id
         ]['entity_id'].tolist()
@@ -89,31 +90,20 @@ class DeduplicationResult:
         
         duplicate_groups = entity_groups[entity_groups['group_id'] > 0].groupby('group_id')
         
+        if keep_strategy in ('first', 'last'):
+            positions = pd.Series(range(len(original_df)))
+            agg = 'min' if keep_strategy == 'first' else 'max'
+            pos_by_id = positions.groupby(original_df[id_column].to_numpy()).agg(agg)
+
         for group_id, group_df in duplicate_groups:
             group_entities = group_df['entity_id'].tolist()
-            
-            if keep_strategy == 'first':
-                original_indices = []
-                for entity_id in group_entities:
-                    idx = original_df[original_df[id_column] == entity_id].index
-                    if len(idx) > 0:
-                        original_indices.append((entity_id, idx[0]))
-                
-                if original_indices:
-                    original_indices.sort(key=lambda x: x[1])
-                    entities_to_keep.append(original_indices[0][0])
-                    
-            elif keep_strategy == 'last':
-                original_indices = []
-                for entity_id in group_entities:
-                    idx = original_df[original_df[id_column] == entity_id].index
-                    if len(idx) > 0:
-                        original_indices.append((entity_id, idx[-1]))
-                
-                if original_indices:
-                    original_indices.sort(key=lambda x: x[1])
-                    entities_to_keep.append(original_indices[-1][0])
-                    
+
+            if keep_strategy in ('first', 'last'):
+                found = pos_by_id.reindex(group_entities).dropna()
+                if len(found):
+                    pick = found.idxmin() if keep_strategy == 'first' else found.idxmax()
+                    entities_to_keep.append(pick)
+
             elif keep_strategy == 'highest_score':
                 if not self.duplicate_pairs.empty:
                     entity_scores = {}
@@ -378,17 +368,43 @@ class DeduplicationPipeline:
         matcher: Matcher,
         validator: Optional[Validator] = None,
         checkpoint: bool = True,
-        checkpoint_dir: str = ".deduplix_checkpoints"
+        checkpoint_dir: str = ".deduplix_checkpoints",
+        checkpoint_type=_UNSET,
+        checkpoint_db_path: Optional[str] = None,
+        checkpoint_compress: bool = False,
+        hooks=None,
     ):
         self.matcher = matcher
         self.validator = validator
+        self.hooks = list(hooks or [])
         self.checkpoint_enabled = checkpoint
-        self.checkpointer = Checkpointer(checkpoint_dir) if checkpoint else None
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpointer = None
+        if checkpoint_type is _UNSET:
+            # legacy behaviour: keep the old checkpoint layout so existing runs still resume
+            self.checkpoint_type = "file"
+            if checkpoint:
+                self.checkpointer = Checkpointer(checkpoint_dir)
+        else:
+            self.checkpoint_type = checkpoint_type
+            if checkpoint_type == "file":
+                from .checkpointing import FileCheckpointer
+                if checkpoint:
+                    self.checkpointer = FileCheckpointer(checkpoint_dir, compress=checkpoint_compress)
+            elif checkpoint_type == "database":
+                from .checkpointing import DatabaseCheckpointer
+                if checkpoint:
+                    self.checkpointer = DatabaseCheckpointer(
+                        checkpoint_db_path or "deduplix_checkpoints.db", compress=checkpoint_compress)
+            else:
+                raise ConfigurationError(f"Unsupported checkpoint type: {checkpoint_type}",
+                                         config_key="checkpoint_type", config_value=checkpoint_type)
     
     def _compute_data_hash(self, df: pd.DataFrame) -> str:
         """Compute collision-resistant hash of dataframe for checkpoint identification"""
-        id_hash = pd.util.hash_pandas_object(df['id'], index=False).sum()
-        hash_str = f"{df.shape[0]}_{df.shape[1]}_{id_hash}"
+        cols = [c for c in ('id', 'name') if c in df.columns]
+        row_hash = pd.util.hash_pandas_object(df[cols].astype(str), index=False).sum()
+        hash_str = f"{df.shape[0]}_{df.shape[1]}_{row_hash}"
         return hashlib.md5(hash_str.encode()).hexdigest()[:16]
     
     def _remove_symmetric_pairs(self, pairs_df: pd.DataFrame) -> pd.DataFrame:
@@ -410,8 +426,10 @@ class DeduplicationPipeline:
         G = nx.Graph()
         
         if not validated_pairs.empty:
-            for _, row in validated_pairs.iterrows():
-                G.add_edge(row['id1'], row['id2'], weight=row.get('similarity_score', 1.0))
+            weights = (validated_pairs['similarity_score'] if 'similarity_score' in validated_pairs.columns
+                       else pd.Series(1.0, index=validated_pairs.index))
+            G.add_weighted_edges_from(
+                zip(validated_pairs['id1'], validated_pairs['id2'], weights), weight='weight')
         
         components = list(nx.connected_components(G))
         
@@ -420,20 +438,11 @@ class DeduplicationPipeline:
             for entity_id in component:
                 entity_to_group[entity_id] = group_id
         
-        result_rows = []
-        
-        for _, row in all_entities.iterrows():
-            entity_id = row['id']
-            entity_name = row['name']
-            group_id = entity_to_group.get(entity_id, 0)
-            
-            result_rows.append({
-                'entity_id': entity_id,
-                'entity_name': entity_name,
-                'group_id': group_id
-            })
-        
-        entity_groups = pd.DataFrame(result_rows)
+        entity_groups = pd.DataFrame({
+            'entity_id': all_entities['id'].to_numpy(),
+            'entity_name': all_entities['name'].to_numpy(),
+            'group_id': all_entities['id'].map(entity_to_group).fillna(0).astype('int64').to_numpy(),
+        })
         
         statistics = {
             'total_entities': len(all_entities),
@@ -462,7 +471,7 @@ class DeduplicationPipeline:
         """Run the complete deduplication pipeline"""
         
         if id_column not in df.columns or name_column not in df.columns:
-            raise ValueError(f"Required columns {id_column} and {name_column} not found")
+            raise DataValidationError(f"Required columns {id_column} and {name_column} not found")
         
         working_df = df.rename(columns={id_column: 'id', name_column: 'name'})
         data_hash = self._compute_data_hash(working_df) if self.checkpoint_enabled else None
@@ -710,24 +719,23 @@ class DeduplicationPipeline:
     ) -> CrossDatasetResult:
         """Create cross-dataset matching result"""
         
-        matches = []
-        for _, row in validated_pairs.iterrows():
-            match_dict = {
-                'df1_id': row['id1'],
-                'df1_name': row['name1'],
-                'df2_id': row['id2'], 
-                'df2_name': row['name2'],
-                'similarity_score': row['similarity_score'],
-                'validation_reason': row.get('validation_reason', '')
-            }
-            if 'matched_column1' in row:
-                match_dict['matched_column1'] = row['matched_column1']
-            if 'matched_column2' in row:
-                match_dict['matched_column2'] = row['matched_column2']
-            matches.append(match_dict)
-        
-        matches_df = pd.DataFrame(matches) if matches else pd.DataFrame()
-        
+        if validated_pairs.empty:
+            matches_df = pd.DataFrame()
+        else:
+            vp = validated_pairs
+            matches_df = pd.DataFrame({
+                'df1_id': vp['id1'].to_numpy(),
+                'df1_name': vp['name1'].to_numpy(),
+                'df2_id': vp['id2'].to_numpy(),
+                'df2_name': vp['name2'].to_numpy(),
+                'similarity_score': vp['similarity_score'].to_numpy(),
+                'validation_reason': (vp['validation_reason'].to_numpy() if 'validation_reason' in vp.columns
+                                      else ''),
+            })
+            for col in ('matched_column1', 'matched_column2'):
+                if col in vp.columns:
+                    matches_df[col] = vp[col].to_numpy()
+
         df1_with_matches = set(validated_pairs['id1'].tolist()) if not validated_pairs.empty else set()
         df2_with_matches = set(validated_pairs['id2'].tolist()) if not validated_pairs.empty else set()
         
