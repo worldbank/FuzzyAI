@@ -1,3 +1,7 @@
+"""Pair validators: decide whether candidate duplicate *pairs* are real matches.
+
+(Input-data checks live in :mod:`deduplix.validation`.)
+"""
 import os
 import re
 import json

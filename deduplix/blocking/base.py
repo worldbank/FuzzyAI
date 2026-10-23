@@ -72,24 +72,21 @@ def sp_matmul_topn(A, B, top_n: int, threshold: float = 0.0, chunk_size: int = 1
                 prod = None
         if prod is None:
             prod = (chunk @ B).tocsr()
-        prod.eliminate_zeros()
-        indptr, indices, data = prod.indptr, prod.indices, prod.data
-        for r in range(stop - start):
-            lo, hi = indptr[r], indptr[r + 1]
-            if lo == hi:
-                continue
-            c, v = indices[lo:hi], data[lo:hi]
-            keep = (v >= threshold) if threshold > 0 else (v > 0)
-            if exclude_diagonal:
-                keep &= c != (start + r)
-            c, v = c[keep], v[keep]
-            if len(v) > top_n:
-                sel = np.argpartition(-v, top_n - 1)[:top_n]
-                c, v = c[sel], v[sel]
-            if len(v):
-                rows_out.append(np.full(len(v), start + r, dtype=np.int64))
-                cols_out.append(c.astype(np.int64))
-                vals_out.append(v.astype(np.float32))
+        coo = prod.tocoo()
+        r, c, v = coo.row.astype(np.int64), coo.col.astype(np.int64), coo.data
+        keep = (v >= threshold) if threshold > 0 else (v > 0)
+        if exclude_diagonal:
+            keep &= c != (r + start)
+        r, c, v = r[keep], c[keep], v[keep]
+        if len(v):
+            order = np.lexsort((-v, r))  # by row, then descending value
+            r, c, v = r[order], c[order], v[order]
+            first = np.r_[0, np.flatnonzero(np.diff(r)) + 1]
+            rank = np.arange(len(r)) - np.repeat(first, np.diff(np.r_[first, len(r)]))
+            sel = rank < top_n
+            rows_out.append(r[sel] + start)
+            cols_out.append(c[sel])
+            vals_out.append(v[sel].astype(np.float32))
     if not rows_out:
         return _empty3()
     return np.concatenate(rows_out), np.concatenate(cols_out), np.concatenate(vals_out)

@@ -1,0 +1,18 @@
+# Basic pipeline plus LLM validation of the pairs the router cannot decide.
+# Set DEDUPLIX_ENDPOINT (Databricks serving endpoint) or swap the provider block.
+normalize:
+  - default_text
+blocking:
+  - tfidf_char: {on: name_norm, top_n: 20, threshold: 0.5}
+compare:
+  name: {fn: token_sort_ratio, left: name_norm}
+score:
+  feature: {name: name}
+route:
+  threshold: {accept_above: 0.95, reject_below: 0.60}
+validate:
+  - llm:
+      provider: {databricks: {endpoint: "${DEDUPLIX_ENDPOINT}", mode: chat}}
+      prompt: pair_validation_v2.j2
+      policy: {mode: bool, on_failure: unvalidated}
+cluster: components

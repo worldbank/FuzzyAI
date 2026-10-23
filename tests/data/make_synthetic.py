@@ -46,26 +46,36 @@ def _base_names(n: int, rng: random.Random) -> list:
     names, seen = [], set()
     while len(names) < n:
         nm = f"{rng.choice(_STEMS)} {rng.choice(_SECTORS)} {rng.choice(_STEMS)} {rng.choice(_FORMS)}"
+        if len(seen) > 40000:  # pool of distinct combinations is finite; widen it for big n
+            nm = f"{nm} {rng.randrange(10**4)}"
         if nm not in seen:
             seen.add(nm)
             names.append(nm)
     return names
 
 
-def make_companies(n: int = 2000, dup_rate: float = 0.2, seed: int = 42) -> pd.DataFrame:
-    """Return ``n`` rows (``id``, ``name``, ``country``) with injected near-duplicates."""
+def make_companies(n: int = 2000, dup_rate: float = 0.2, seed: int = 42,
+                   with_entity: bool = False) -> pd.DataFrame:
+    """Return ``n`` rows (``id``, ``name``, ``country``) with injected near-duplicates.
+
+    ``with_entity=True`` adds an ``entity`` column (the row of the base name) for gold labels.
+    """
     rng = random.Random(seed)
     n_dups = int(n * dup_rate)
     base = _base_names(n - n_dups, rng)
-    rows = [(nm, rng.choice(_COUNTRIES)) for nm in base]
+    rows = [(nm, rng.choice(_COUNTRIES), i) for i, nm in enumerate(base)]
     for _ in range(n_dups):
-        nm, c = rng.choice(rows[: len(base)])
-        rows.append((_variant(nm, rng), c))
+        j = rng.randrange(len(base))
+        nm, c, _e = rows[j]
+        rows.append((_variant(nm, rng), c, j))
     rng.shuffle(rows)
-    return pd.DataFrame(
-        {"id": [f"C{i:05d}" for i in range(len(rows))],
+    out = pd.DataFrame(
+        {"id": [f"C{i:0{max(5, len(str(len(rows))))}d}" for i in range(len(rows))],
          "name": [r[0] for r in rows], "country": [r[1] for r in rows]}
     )
+    if with_entity:
+        out["entity"] = [r[2] for r in rows]
+    return out
 
 
 def make_cross(n1: int = 1000, n2: int = 1500, overlap: float = 0.4,

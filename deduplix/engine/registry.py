@@ -142,6 +142,8 @@ def build(kind: str, spec: Any) -> Any:
             params = {}
         if not isinstance(params, dict):
             raise ConfigurationError(f"Parameters of {kind} '{name}' must be a mapping")
+        if True in params:  # YAML 1.1 parses an unquoted ``on:`` key as boolean True
+            params = {("on" if k is True else k): v for k, v in params.items()}
     else:
         return spec  # object satisfying the protocol: returned as is
     target = _lookup(kind, name)

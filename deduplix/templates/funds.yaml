@@ -1,0 +1,31 @@
+# Reference pipeline for fund vehicles (set DEDUPLIX_ENDPOINT for the LLM stage).
+normalize:
+  - default_text
+  - name_parser: {country_column: country}
+blocking:
+  - exact: {keys: [lei, registration_no]}
+  - tfidf_char: {on: name_base, top_n: 20, threshold: 0.5, partition_by: [country]}
+  - token_index: {on: name_base, max_df: 1000, top_k: 50}
+compare:
+  name: {fn: token_set_ratio, left: name_base}
+  designators: {fn: designator_check}
+  legal_form: {fn: legal_form_compat}
+  country: {fn: exact, left: country}
+score:
+  weighted:
+    weights: {f_name: 0.7, f_country: 0.2, f_legal_form: 0.1}
+    maps: {f_legal_form: {same: 1.0, equivalent: 1.0, missing: 0.5, different: 0.0}}
+route:
+  rule:
+    rules:
+      - {feature: f_designators, equals: reject, route: reject}
+      - {feature: f_designators, equals: review, route: review}
+    then: {threshold: {accept_above: 0.95, reject_below: 0.60}}
+validate:
+  - llm:
+      provider: {databricks: {endpoint: "${DEDUPLIX_ENDPOINT}", mode: chat}}
+      prompt: pair_validation_v2.j2
+      policy: {mode: bool, on_failure: unvalidated}
+      metadata_columns: [country, legal_form, designator_nums, designator_quals]
+cluster:
+  guarded: {max_size: 50, strategy: drop_weakest}

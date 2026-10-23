@@ -113,6 +113,29 @@ class PipelineResult:
         (out / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         return out
 
+    @classmethod
+    def load(cls, path: str) -> "PipelineResult":
+        """Read a directory written by :meth:`save`."""
+        import yaml
+
+        d = Path(path)
+        if not (d / "meta.json").exists() or not (d / "pairs.parquet").exists():
+            raise FileNotFoundError(f"{d} does not contain engine results (pairs.parquet / meta.json)")
+        meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        right = d / "right_records.parquet"
+        cfg_p, stats_p = d / "pipeline.yaml", d / "stats.json"
+        return cls(
+            records=pd.read_parquet(d / "records.parquet"),
+            pairs=pd.read_parquet(d / "pairs.parquet"),
+            stats=json.loads(stats_p.read_text(encoding="utf-8")) if stats_p.exists() else {},
+            config=(yaml.safe_load(cfg_p.read_text(encoding="utf-8")) or {}) if cfg_p.exists() else {},
+            mode=meta["mode"],
+            columns=ColumnMap(id=meta["id"], name=meta["name"], right_id=meta.get("right_id"),
+                              right_name=meta.get("right_name")),
+            right_records=pd.read_parquet(right) if right.exists() else None,
+            legacy_score_feature=meta.get("legacy_score_feature"),
+        )
+
     def to_legacy(self):
         """Convert to ``DeduplicationResult`` (dedup) or ``CrossDatasetResult`` (link)."""
         from ..core import CrossDatasetResult, DeduplicationResult

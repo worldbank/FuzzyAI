@@ -1,0 +1,12 @@
+# Basic name-similarity deduplication pipeline.
+normalize:
+  - default_text
+blocking:
+  - tfidf_char: {on: name_norm, top_n: 20, threshold: 0.5}
+compare:
+  name: {fn: token_sort_ratio, left: name_norm}
+score:
+  feature: {name: name}
+route:
+  threshold: {accept_above: 0.95, reject_below: 0.60}
+cluster: components
