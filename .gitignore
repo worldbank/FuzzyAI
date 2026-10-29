@@ -104,3 +104,5 @@ publishing-guide.md
 !tests/golden/*.parquet
 !tests/golden/*.json
 !tests/compat/api_snapshot.json
+
+.databricks

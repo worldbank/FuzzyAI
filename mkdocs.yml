@@ -1,0 +1,25 @@
+site_name: deduplix
+site_description: Staged, pluggable entity deduplication and record linkage
+repo_url: https://github.com/worldbank/FuzzyAI
+docs_dir: docs
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+nav:
+  - Home: index.md
+  - Concepts: concepts.md
+  - Config reference: config-reference.md
+  - Component catalogue: components.md
+  - Write your own component: custom-components.md
+  - Migration 0.1 to 0.2: migration.md
+  - Cookbook: cookbook.md
+  - Baseline test results: baseline.md

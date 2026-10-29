@@ -43,13 +43,13 @@ The library provides a complete toolkit for:
 
 ```bash
 # Basic installation
-pip install fuzzy-ai-lib
+pip install deduplix
 
 # With LLM validation support
-pip install fuzzy-ai-lib[llm]
+pip install deduplix[llm]
 
 # With all dependencies
-pip install fuzzy-ai[all]
+pip install deduplix[all]
 
 # Install with all dependencies from requirements
 pip install -r requirements.txt
@@ -57,8 +57,8 @@ pip install -r requirements.txt
 
 **Manual installation from source:**
 ```bash
-git clone https://github.com/worldbank/fuzzy-ai.git
-cd fuzzy-ai
+git clone https://github.com/worldbank/FuzzyAI.git
+cd FuzzyAI
 pip install -e .
 ```
 
@@ -76,6 +76,22 @@ Optional dependencies:
 - langchain-community (for Databricks LLM validation)
 
 ## Quick Start
+
+### Engine quick start (0.2)
+
+```python
+import pandas as pd
+from deduplix import Pipeline, EngineMatcher, DeduplicationPipeline
+
+df = pd.DataFrame({"id": [1, 2, 3], "name": ["Acme Holdings Ltd", "ACME Holdings Limited", "Zeta Corp"]})
+result = Pipeline.default().dedupe(df, id_column="id", name_column="name")
+print(result.matches)                                # pairs decided as duplicates
+pipeline = Pipeline.from_config({"normalize": ["default_text"], "blocking": ["brute_force"],
+    "compare": {"name": {"fn": "token_sort_ratio", "left": "name_norm"}}, "score": {"feature": {"name": "name"}}})
+legacy = DeduplicationPipeline(matcher=EngineMatcher(pipeline)).run(df, "id", "name")  # 0.1 API, engine matching
+```
+
+See the [documentation](docs/index.md) for concepts, the config reference and a cookbook.
 
 ### 1. Basic Deduplication
 
@@ -876,19 +892,22 @@ If you use Fuzzy AI in your research, please cite:
   title = {Fuzzy AI: Entity Deduplication and Matching with LLM Validation},
   author = {World Bank},
   year = {2024},
-  url = {https://github.com/worldbank/fuzzy-ai}
+  url = {https://github.com/worldbank/FuzzyAI}
 }
 ```
 
 ## Support
 
-- **Issues**: https://github.com/worldbank/fuzzy-ai/issues
-- **Discussions**: https://github.com/worldbank/fuzzy-ai/discussions
-- **Documentation**: https://github.com/worldbank/fuzzy-ai
+- **Issues**: https://github.com/worldbank/FuzzyAI/issues
+- **Discussions**: https://github.com/worldbank/FuzzyAI/discussions
+- **Documentation**: https://github.com/worldbank/FuzzyAI
 
 ## Changelog
 
-### Version 0.1.0 (Current)
+### Version 0.2.0 (Current)
+See [CHANGELOG.md](CHANGELOG.md).
+
+### Version 0.1.0
 - Initial release
 - Fuzzy matching with RapidFuzz
 - LLM validation (OpenAI, Anthropic, Databricks)
